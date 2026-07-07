@@ -1,0 +1,114 @@
+const express = require("express");
+const cors = require("cors");
+const helmet = require("helmet");
+const rfs = require("rotating-file-stream");
+const morgan = require("morgan");
+const rateLimit = require("express-rate-limit");
+const compression = require("compression");
+const cookieParser = require('cookie-parser')
+const fs = require("fs");
+const path = require("path");
+require("dotenv").config();
+const errorHandler = require("./middleware/ErrorHandler.js");
+const sqlInjectionProtection = require("./middleware/sqlInjectionProtection.js");
+const app = express();
+
+// Middlewares
+app.use(cors({
+  origin: process.env.CORS_ORIGIN.split(","), // Allow multiple domains
+  credentials: true,
+  methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
+  allowedHeaders: "Content-Type, Authorization"
+}));
+
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "https://trusted-scripts.com"],
+      styleSrc: ["'self'", "https://trusted-styles.com"],
+      imgSrc: ["'self'", "data:", "https://trusted-images.com"],
+    }
+  },
+  hsts: {
+    maxAge: 31536000, // 1 year
+    includeSubDomains: true,
+    preload: true
+  }
+}));
+app.use(express.json()); // Body parsing
+app.use(compression()); // Response compression
+app.use(morgan("dev")); // Logging
+app.use(express.urlencoded({ extended: true }))
+app.use('/public', express.static(path.join(__dirname, 'public'), {
+  dotfiles: 'deny', // Prevents access to hidden files
+  extensions: ['html', 'css', 'js'], // Restrict file types
+}));
+app.use(cookieParser(process.env.COOKIE_SECRET, {
+  httpOnly: true, // Prevents client-side JS access
+  secure: process.env.NODE_ENV === 'production', // Only HTTPS in production
+  sameSite: "strict", // Prevents CSRF attacks
+}));
+
+//Sql Injuction 
+// app.use(sqlInjectionProtection);
+
+
+// Rate Limiting (Prevent DDoS Attacks)
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 1000,
+  keyGenerator: (req) => req.ip // IP-based limiting
+});
+app.use(limiter);
+
+// Cache-Control
+app.use((req, res, next) => {
+  res.setHeader("Cache-Control", "public, max-age=3600, immutable"); // Cache for 1 hour
+  next();
+});
+
+const logFormat = process.env.NODE_ENV === "production" ? "combined" : "dev";
+
+const accessLogStream = rfs.createStream("access.log", {
+  interval: "1d", // Rotate daily
+  path: path.join(__dirname, "logs")
+});
+
+app.use(morgan(logFormat, { stream: accessLogStream }));
+
+
+// Import Middleware
+const Userrouter = require('./routes/UserRoutes/User.routes.js')
+const Landingrouter = require('./routes/LandingRoutes/Landing.routes.js')
+const Amcrouter = require('./routes/AmcRoutes/Amc.routes.js')
+const SingleSchemerouter = require('./routes/SingleSchemeRoutes/SingleScheme.routes.js')
+const NFOrouter = require('./routes/NFORoutes/NFO.routes.js')
+const Screenerrouter = require('./routes/ScreenerRoutes/Screener.routes.js')
+const ReportAnalytics = require('./routes/ReportAnalyticsRoutes/ReportAnalytics.routes.js')
+
+// Define Routes
+app.use(`${process.env.BASE_NAVIGATE}user`, Userrouter)
+app.use(`${process.env.BASE_NAVIGATE}landing`, Landingrouter)
+app.use(`${process.env.BASE_NAVIGATE}amc`,Amcrouter)
+app.use(`${process.env.BASE_NAVIGATE}singlescheme`,SingleSchemerouter)
+app.use(`${process.env.BASE_NAVIGATE}nfo`,NFOrouter)
+app.use(`${process.env.BASE_NAVIGATE}screener`,Screenerrouter)
+app.use(`${process.env.BASE_NAVIGATE}report-analytics`,ReportAnalytics)
+
+
+app.get('/', (req, res) => {
+  res.status(200).json({
+    status: "success",
+    message: "Navindia API is running smoothly! 🚀"
+  });
+});
+
+// 404 Route Handler
+app.use((req, res, next) => {
+  res.status(404).json({ status: "error", message: "Route not found" });
+});
+
+// Global Error Handler (Always at the end)
+app.use(errorHandler);
+module.exports = { app }; // Export only the app

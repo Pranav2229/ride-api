@@ -1,0 +1,12 @@
+[0mGET /api/general/user/get_user_rides [33m401[0m 4.774 ms - 58[0m
+[0mPOST /api/general/user/refresh_token [32m200[0m 114.807 ms - 176[0m
+[0mGET /api/general/user/get_user_rides [32m200[0m 284.447 ms - -[0m
+[0mGET /api/general/user/get_user_rides [32m200[0m 161.366 ms - -[0m
+[0mGET /api/general/user/get_user_rides [32m200[0m 1412.828 ms - -[0m
+[0mGET /api/general/driver/get_driver_arnings [33m401[0m 219.225 ms - 54[0m
+[0mPOST /api/general/user/refresh_token [32m200[0m 99.784 ms - 176[0m
+[0mGET /api/general/driver/get_driver_arnings [32m200[0m 788.665 ms - 126[0m
+[0mPOST /api/general/driver/login_driver [32m200[0m 365.714 ms - 573[0m
+[0mGET /api/general/driver/get_driver_arnings [32m200[0m 191.526 ms - 123[0m
+[0mGET / [32m200[0m 19.414 ms - 67[0m
+[0mGET /favicon.ico [33m404[0m 0.871 ms - 46[0m

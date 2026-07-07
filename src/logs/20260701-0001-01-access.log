@@ -1,0 +1,14 @@
+[0mPOST /api/general/driver/login_driver [32m200[0m 654.981 ms - 611[0m
+[0mPOST /api/general/driver/login_driver [32m200[0m 524.773 ms - 611[0m
+[0mPOST /api/general/driver/login_driver [32m200[0m 139.147 ms - 611[0m
+[0mGET /api/general/driver/login_user [33m404[0m 104.826 ms - 46[0m
+[0mPOST /api/general/driver/login_user [33m404[0m 6.776 ms - 46[0m
+[0mPOST /api/general/user/login_user [33m400[0m 47.204 ms - 258[0m
+[0mPOST /api/general/user/login_user [33m400[0m 3.592 ms - 291[0m
+[0mPOST /api/general/user/login_user [33m400[0m 30.453 ms - 118[0m
+[0mPOST /api/general/user/login_user [33m401[0m 298.997 ms - 55[0m
+[0mPOST /api/general/user/login_user [32m200[0m 215.801 ms - 576[0m
+[0mPOST /api/general/user/login_user [33m401[0m 501.028 ms - 55[0m
+[0mPOST /general/user/refresh_token [33m404[0m 1.923 ms - 46[0m
+[0mPOST /api/general/user/login_user [32m200[0m 413.718 ms - 576[0m
+[0mPOST /api/general/user/login_user [32m200[0m 427.689 ms - 576[0m

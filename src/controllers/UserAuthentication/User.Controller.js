@@ -24,8 +24,8 @@ const loginUser = async (req, res) => {
         errors: errors.array()
       });
     }
-    console.log("req.body",req.body);
-    
+    console.log("req.body", req.body);
+
     const { email, password } = req.body;
 
     // Execute Stored Procedure
@@ -34,7 +34,7 @@ const loginUser = async (req, res) => {
       [email, password]
     );
     // console.log("result",result);
-    
+
     if (result.rows.length === 0) {
       return res.status(401).json({
         success: false,
@@ -42,7 +42,7 @@ const loginUser = async (req, res) => {
       });
     }
     const user = result.rows[0].p_response;
-console.log("user",user);
+    console.log("user", user);
 
     if (!user.success) {
       return res.status(401).json({
@@ -74,7 +74,7 @@ console.log("user",user);
     return res.status(200).json({
       success: true,
       message: "Login successful",
-      role : "CUSTOMER",
+      role: "CUSTOMER",
       data: {
         user,
         accessToken,
@@ -92,6 +92,172 @@ console.log("user",user);
   }
 };
 
+const registerUser = async (req, res) => {
+  try {
+
+    const errors = validationResult(req);
+
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        errors: errors.array()
+      });
+    }
+
+    const {
+      full_name,
+      email,
+      phone,
+      password,
+      gender
+    } = req.body;
+
+    const result = await pool.query(
+      `
+      CALL public.register_user(
+        $1,  -- full_name
+        $2,  -- email
+        $3,  -- phone
+        $4,  -- password
+        $5,  -- gender
+        NULL
+      )
+      `,
+      [
+        full_name,
+        email,
+        phone,
+        password,
+        gender
+      ]
+    );
+
+    if (
+      !result.rows ||
+      result.rows.length === 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Unable to register user"
+      });
+    }
+
+    const response = result.rows[0].p_response;
+
+    if (!response.success) {
+      return res.status(400).json({
+        success: false,
+        message: response.message
+      });
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: response.message,
+      data: response.data
+    });
+
+  } catch (error) {
+
+    console.error(error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+const updateUserProfile = async (req, res) => {
+  try {
+
+    // VALIDATION
+    const errors = validationResult(req);
+
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        errors: errors.array()
+      });
+    }
+
+    // GET USER ID FROM JWT
+    const user_id = req.user.userId;
+
+    const {
+      full_name,
+      email,
+      phone,
+      profile_image,
+      gender
+    } = req.body;
+
+
+    // CALL STORED PROCEDURE
+    const result = await pool.query(
+      `
+      CALL public.update_user_profile(
+        $1,  -- user_id
+        $2,  -- full_name
+        $3,  -- email
+        $4,  -- phone
+        $5,  -- profile_image
+        $6,  -- gender
+        NULL
+      )
+      `,
+      [
+        user_id,
+        full_name,
+        email,
+        phone,
+        profile_image,
+        gender
+      ]
+    );
+
+
+    // CHECK RESPONSE
+    if (
+      !result.rows ||
+      result.rows.length === 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Unable to update user profile"
+      });
+    }
+
+
+    const response = result.rows[0].p_response;
+
+
+    // SP ERROR
+    if (!response.success) {
+      return res.status(400).json({
+        success: false,
+        message: response.message
+      });
+    }
+
+
+    // SUCCESS
+    return res.status(200).json({
+      success: true,
+      message: response.message,
+      data: response.data
+    });
+
+  } catch (error) {
+
+    console.error("Update User Profile Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
 
 const createRide = async (req, res) => {
   try {
@@ -347,6 +513,8 @@ const getUserRides = async (req, res) => {
 
 module.exports = {
   loginUser,
+  registerUser,
+  updateUserProfile,
   createRide,
   getNearbyDrivers,
   getUserRides

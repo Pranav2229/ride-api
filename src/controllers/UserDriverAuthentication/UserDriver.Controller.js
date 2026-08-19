@@ -1,32 +1,32 @@
 const pool = require("../../middleware/db.connection.js");
 const jwt = require("jsonwebtoken");
 const {
-    checkSchema,
-    body,
-    validationResult
+  checkSchema,
+  body,
+  validationResult
 } = require("express-validator");
 const crypto = require("crypto");
 
 const cancelRide = async (req, res) => {
-    try {
+  try {
 
-        const errors = validationResult(req);
+    const errors = validationResult(req);
 
-        if (!errors.isEmpty()) {
-            return res.status(400).json({
-                success: false,
-                errors: errors.array()
-            });
-        }
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        errors: errors.array()
+      });
+    }
 
-        const {
-            ride_id,
-            cancelled_by,
-            reason
-        } = req.body;
+    const {
+      ride_id,
+      cancelled_by,
+      reason
+    } = req.body;
 
-        const result = await pool.query(
-            `
+    const result = await pool.query(
+      `
       CALL public.cancel_ride(
         $1,
         $2,
@@ -34,54 +34,56 @@ const cancelRide = async (req, res) => {
         NULL
       )
       `,
-            [
-                ride_id,
-                cancelled_by,
-                reason
-            ]
-        );
+      [
+        ride_id,
+        cancelled_by,
+        reason
+      ]
+    );
 
-        if (
-            !result.rows ||
-            result.rows.length === 0
-        ) {
-            return res.status(400).json({
-                success: false,
-                message: "Unable to cancel ride"
-            });
-        }
-
-        const response = result.rows[0].p_response;
-
-        if (!response.success) {
-            return res.status(400).json({
-                success: false,
-                message: response.message
-            });
-        }
-
-        return res.status(200).json({
-            success: true,
-            message: response.message,
-            data: response.data
-        });
-
-    } catch (error) {
-
-        console.error(error);
-
-        return res.status(500).json({
-            success: false,
-            message: error.message
-        });
-
+    if (
+      !result.rows ||
+      result.rows.length === 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Unable to cancel ride"
+      });
     }
+
+    const response = result.rows[0].p_response;
+
+    if (!response.success) {
+      return res.status(400).json({
+        success: false,
+        message: response.message
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: response.message,
+      data: response.data
+    });
+
+  } catch (error) {
+
+    console.error(error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message
+    });
+
+  }
 };
 
 
 const refreshToken = async (req, res) => {
   try {
     const { refreshToken } = req.body;
+    console.log("refreshTokenrefreshTokenrefreshToken", refreshToken);
+
     if (!refreshToken) {
       return res.status(401).json({
         success: false,
@@ -92,6 +94,8 @@ const refreshToken = async (req, res) => {
       refreshToken,
       process.env.JWT_REFRESH_SECRET
     );
+
+
 
     const accessToken = jwt.sign(
       {
@@ -119,6 +123,6 @@ const refreshToken = async (req, res) => {
 };
 
 module.exports = {
-    refreshToken,
-    cancelRide
+  refreshToken,
+  cancelRide
 };

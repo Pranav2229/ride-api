@@ -5,6 +5,8 @@ const {
 } = require("express-validator");
 const {
   loginDriver,
+  registerDriver,
+  updateDriverProfile,
   acceptRide,
   startRide,
   completeRide,
@@ -13,7 +15,90 @@ const {
 } = require('../../controllers/DriverAuthentication/Driver.Controller.js');
 const authMiddleware = require("../../middleware/Auth.token.js");
 
-// router.post('/register', registerUser);
+router.post(
+  "/register_driver",
+  [
+    body("full_name")
+      .trim()
+      .notEmpty()
+      .withMessage("Full name is required"),
+
+    body("email")
+      .trim()
+      .isEmail()
+      .withMessage("Valid email is required"),
+
+    body("phone")
+      .trim()
+      .isLength({ min: 10, max: 15 })
+      .withMessage("Valid phone number is required"),
+
+    body("password")
+      .isLength({ min: 6 })
+      .withMessage("Password must be at least 6 characters"),
+
+    body("license_number")
+      .trim()
+      .notEmpty()
+      .withMessage("License number is required"),
+
+    body("aadhaar_number")
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ min: 12, max: 12 })
+      .withMessage("Aadhaar number must be 12 digits"),
+
+    body("pan_number")
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ min: 10, max: 10 })
+      .withMessage("PAN number must be 10 characters")
+  ],
+  registerDriver
+);
+
+router.put(
+    "/update_driver_profile",
+    
+    [
+        body("full_name")
+            .trim()
+            .notEmpty()
+            .withMessage("Full name is required"),
+
+        body("email")
+            .trim()
+            .isEmail()
+            .withMessage("Valid email is required"),
+
+        body("phone")
+            .trim()
+            .isLength({ min: 10, max: 15 })
+            .withMessage("Valid phone number is required"),
+
+        body("license_number")
+            .trim()
+            .notEmpty()
+            .withMessage("License number is required"),
+
+        body("aadhaar_number")
+            .optional({ nullable: true })
+            .trim()
+            .isLength({ min: 12, max: 12 })
+            .withMessage("Aadhaar number must be 12 digits"),
+
+        body("pan_number")
+            .optional({ nullable: true })
+            .trim()
+            .isLength({ min: 10, max: 10 })
+            .withMessage("PAN number must be 10 characters"),
+
+        body("profile_image")
+            .optional({ nullable: true })
+            .trim()
+    ],
+    updateDriverProfile
+);
 
 router.post(
   "/login_driver",

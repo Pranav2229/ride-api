@@ -6,8 +6,10 @@ const {
 const {
   loginUser,
   createRide,
+  updateUserProfile,
   getNearbyDrivers,
-  getUserRides
+  getUserRides,
+  registerUser
 } = require('../../controllers/UserAuthentication/User.Controller.js');
 const authMiddleware = require("../../middleware/Auth.token.js");
 
@@ -27,6 +29,66 @@ router.post("/login_user", [
   loginUser
 );
 
+router.post(
+  "/register_user",
+  [
+    body("full_name")
+      .trim()
+      .notEmpty()
+      .withMessage("Full name is required"),
+
+    body("email")
+      .trim()
+      .isEmail()
+      .withMessage("Valid email is required"),
+
+    body("phone")
+      .trim()
+      .isLength({ min: 10, max: 15 })
+      .withMessage("Valid phone number is required"),
+
+    body("password")
+      .isLength({ min: 6 })
+      .withMessage("Password must be at least 6 characters"),
+
+    body("gender")
+      .isIn(["Male", "Female", "Other"])
+      .withMessage("Gender must be Male, Female or Other")
+  ],
+  registerUser
+);
+
+router.put(
+    "/update_user_profile",
+    authMiddleware,
+    [
+        body("full_name")
+            .trim()
+            .notEmpty()
+            .withMessage("Full name is required"),
+
+        body("email")
+            .trim()
+            .isEmail()
+            .withMessage("Valid email is required"),
+
+        body("phone")
+            .trim()
+            .isLength({ min: 10, max: 15 })
+            .withMessage("Valid phone number is required"),
+
+        body("gender")
+            .optional({ nullable: true })
+            .trim()
+            .isLength({ max: 10 })
+            .withMessage("Gender must not exceed 10 characters"),
+
+        body("profile_image")
+            .optional({ nullable: true })
+            .trim()
+    ],
+    updateUserProfile
+);
 router.post(
   "/create_ride",
   authMiddleware,

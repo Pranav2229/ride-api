@@ -5,7 +5,8 @@ const {
 } = require("express-validator");
 const {
     cancelRide,
-    refreshToken
+    refreshToken,
+    resendUserOTP
 } = require('../../controllers/UserDriverAuthentication/UserDriver.Controller.js');
 const authMiddleware = require("../../middleware/Auth.token.js");
 const {
@@ -37,5 +38,16 @@ router.post(
 
 router.post('/refresh_token', refreshToken);
 
+router.post(
+  "/resend_user_otp",
+  [
+    body("user_id")
+     .trim()
+      .notEmpty()
+      .isInt()
+      .withMessage("User ID must be a valid number")
+  ],
+  resendUserOTP
+);
 
 module.exports = router;

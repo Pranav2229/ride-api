@@ -9,7 +9,8 @@ const {
   updateUserProfile,
   getNearbyDrivers,
   getUserRides,
-  registerUser
+  registerUser,
+  verifyUserOTP
 } = require('../../controllers/UserAuthentication/User.Controller.js');
 const authMiddleware = require("../../middleware/Auth.token.js");
 
@@ -152,6 +153,23 @@ router.get(
   "/get_user_rides",
   authMiddleware,
   getUserRides
+);
+
+router.post(
+    "/verify_user_otp",
+    [
+        body("user_id")
+            .isInt()
+            .withMessage("Valid user ID is required"),
+
+        body("otp")
+            .trim()
+            .isLength({ min: 6, max: 6 })
+            .isNumeric()
+            .withMessage("OTP must be 6 digits")
+    ],
+
+    verifyUserOTP
 );
 
 

@@ -1,5 +1,6 @@
 const pool = require("../../middleware/db.connection.js");
 const jwt = require("jsonwebtoken");
+const { generateOTP } = require("../../middleware/otp.js")
 const {
   checkSchema,
   body,
@@ -78,11 +79,9 @@ const cancelRide = async (req, res) => {
   }
 };
 
-
 const refreshToken = async (req, res) => {
   try {
     const { refreshToken } = req.body;
-    console.log("refreshTokenrefreshTokenrefreshToken", refreshToken);
 
     if (!refreshToken) {
       return res.status(401).json({
@@ -122,7 +121,88 @@ const refreshToken = async (req, res) => {
   }
 };
 
+const resendUserOTP = async (req, res) => {
+  try {
+
+    const { user_id } = req.body;
+
+    if (!user_id) {
+      return res.status(400).json({
+        success: false,
+        message: "User ID is required"
+      });
+    }
+
+    // Check user
+    const userResult = await pool.query(
+      `
+      SELECT id, email, is_verified
+      FROM public.users
+      WHERE id = $1
+      `,
+      [user_id]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    // Generate new OTP
+    const otp = generateOTP();
+
+    // OTP valid for 10 minutes
+    const expiresAt = new Date(
+      Date.now() + 10 * 60 * 1000
+    );
+
+
+    // Store new OTP
+    await pool.query(
+      `
+      INSERT INTO public.user_otps
+      (
+        user_id,
+        otp,
+        expires_at
+      )
+      VALUES
+      (
+        $1,
+        $2,
+        $3
+      )
+      `,
+      [
+        user_id,
+        otp,
+        expiresAt
+      ]
+    );
+
+    // TODO: Send OTP to email/SMS here
+    console.log("New OTP:", otp);
+
+    return res.status(200).json({
+      success: true,
+      message: "OTP resent successfully"
+    });
+
+  } catch (error) {
+
+    console.error("Resend OTP Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error"
+    });
+  }
+};
+
 module.exports = {
   refreshToken,
-  cancelRide
+  cancelRide,
+  resendUserOTP
 };

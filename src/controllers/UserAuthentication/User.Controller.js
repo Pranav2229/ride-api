@@ -7,6 +7,7 @@ const {
 } = require("express-validator");
 const crypto = require("crypto");
 const { getIO } = require("../../sockets/index.js");
+const { generateOTP } = require("../../middleware/otp.js")
 // const { emitRideRequest } = require("../../sockets/RideSocket/ride.socket.js");
 const {
   emitNewRide,
@@ -24,8 +25,6 @@ const loginUser = async (req, res) => {
         errors: errors.array()
       });
     }
-    console.log("req.body", req.body);
-
     const { email, password } = req.body;
 
     // Execute Stored Procedure
@@ -42,7 +41,6 @@ const loginUser = async (req, res) => {
       });
     }
     const user = result.rows[0].p_response;
-    console.log("user", user);
 
     if (!user.success) {
       return res.status(401).json({
@@ -71,6 +69,39 @@ const loginUser = async (req, res) => {
         expiresIn: "7d"
       }
     );
+
+    if (!user.data.is_varified) {
+      const otp = generateOTP();
+
+
+      // OTP valid for 10 minutes
+      const expiresAt = new Date(
+        Date.now() + 10 * 60 * 1000
+      );
+
+      // Store OTP
+      await pool.query(
+        `
+            INSERT INTO public.user_otps
+            (
+                user_id,
+                otp,
+                expires_at
+            )
+            VALUES
+            (
+                $1,
+                $2,
+                $3
+            )
+            `,
+        [
+          user.data.user_id,
+          otp,
+          expiresAt
+        ]
+      );
+    }
     return res.status(200).json({
       success: true,
       message: "Login successful",
@@ -150,6 +181,41 @@ const registerUser = async (req, res) => {
         message: response.message
       });
     }
+
+
+
+    const user_id = response.data.user_id;
+    const otp = generateOTP();
+
+
+    // OTP valid for 10 minutes
+    const expiresAt = new Date(
+      Date.now() + 10 * 60 * 1000
+    );
+
+    // Store OTP
+    await pool.query(
+      `
+            INSERT INTO public.user_otps
+            (
+                user_id,
+                otp,
+                expires_at
+            )
+            VALUES
+            (
+                $1,
+                $2,
+                $3
+            )
+            `,
+      [
+        user_id,
+        otp,
+        expiresAt
+      ]
+    );
+
 
     return res.status(201).json({
       success: true,
@@ -511,11 +577,105 @@ const getUserRides = async (req, res) => {
   }
 };
 
+const verifyUserOTP = async (req, res) => {
+  try {
+
+    const errors = validationResult(req);
+
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        errors: errors.array()
+      });
+    }
+
+    const { user_id, otp } = req.body;
+
+    const result = await pool.query(
+      `
+            CALL public.verify_user_otp(
+                $1,
+                $2,
+                NULL
+            )
+            `,
+      [
+        user_id,
+        otp
+      ]
+    );
+
+    if (
+      !result.rows ||
+      result.rows.length === 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Unable to verify OTP"
+      });
+    }
+    const response = result.rows[0].p_response;
+
+    if (!response.success) {
+      return res.status(400).json({
+        success: false,
+        message: response.message
+      });
+    }
+
+    const response_user = response.data
+
+
+    // Access Token
+    const accessToken = jwt.sign(
+      {
+        userId: response_user.user_id,
+        fullname: response_user.full_name
+      },
+      process.env.JWT_ACCESS_SECRET,
+      {
+        expiresIn: "15m"
+      }
+    );
+    // Refresh Token
+    const refreshToken = jwt.sign(
+      {
+        userId: response_user.user_id
+      },
+      process.env.JWT_REFRESH_SECRET,
+      {
+        expiresIn: "7d"
+      }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: response.message,
+      role: "CUSTOMER",
+      data: {
+        response_user,
+        accessToken,
+        refreshToken
+      }
+    });
+
+  } catch (error) {
+
+    console.error(error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error"
+    });
+  }
+};
+
 module.exports = {
   loginUser,
   registerUser,
   updateUserProfile,
   createRide,
   getNearbyDrivers,
-  getUserRides
+  getUserRides,
+  verifyUserOTP
 };

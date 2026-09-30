@@ -677,5 +677,6 @@ module.exports = {
   createRide,
   getNearbyDrivers,
   getUserRides,
-  verifyUserOTP
+  verifyUserOTP,
+  
 };

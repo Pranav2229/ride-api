@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const {
   body,
+  validationResult
 } = require("express-validator");
 const {
   loginDriver,
@@ -11,9 +12,34 @@ const {
   startRide,
   completeRide,
   updateDriverLocation,
-  getDriverEarnings
+  getDriverEarnings,
+  verifyDriverOTP,
+  uploadDriverDocument,
+  getDriverDocumentStatus,
+  upsertVehicleDetails,
+  getVehicleDetails,
+  upsertBankDetails,
+  getBankDetails
 } = require('../../controllers/DriverAuthentication/Driver.Controller.js');
+const uploadDocument = require("../../middleware/uploadDocument.js")
 const authMiddleware = require("../../middleware/Auth.token.js");
+
+const validate = (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    const formatted = {};
+    errors.array().forEach((err) => {
+      if (!formatted[err.path]) formatted[err.path] = err.msg;
+    });
+
+    return res.status(400).json({
+      success: false,
+      message: "Validation failed",
+      errors: formatted,
+    });
+  }
+  next();
+};
 
 router.post(
   "/register_driver",
@@ -58,46 +84,46 @@ router.post(
 );
 
 router.put(
-    "/update_driver_profile",
-    
-    [
-        body("full_name")
-            .trim()
-            .notEmpty()
-            .withMessage("Full name is required"),
+  "/update_driver_profile",
 
-        body("email")
-            .trim()
-            .isEmail()
-            .withMessage("Valid email is required"),
+  [
+    body("full_name")
+      .trim()
+      .notEmpty()
+      .withMessage("Full name is required"),
 
-        body("phone")
-            .trim()
-            .isLength({ min: 10, max: 15 })
-            .withMessage("Valid phone number is required"),
+    body("email")
+      .trim()
+      .isEmail()
+      .withMessage("Valid email is required"),
 
-        body("license_number")
-            .trim()
-            .notEmpty()
-            .withMessage("License number is required"),
+    body("phone")
+      .trim()
+      .isLength({ min: 10, max: 15 })
+      .withMessage("Valid phone number is required"),
 
-        body("aadhaar_number")
-            .optional({ nullable: true })
-            .trim()
-            .isLength({ min: 12, max: 12 })
-            .withMessage("Aadhaar number must be 12 digits"),
+    body("license_number")
+      .trim()
+      .notEmpty()
+      .withMessage("License number is required"),
 
-        body("pan_number")
-            .optional({ nullable: true })
-            .trim()
-            .isLength({ min: 10, max: 10 })
-            .withMessage("PAN number must be 10 characters"),
+    body("aadhaar_number")
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ min: 12, max: 12 })
+      .withMessage("Aadhaar number must be 12 digits"),
 
-        body("profile_image")
-            .optional({ nullable: true })
-            .trim()
-    ],
-    updateDriverProfile
+    body("pan_number")
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ min: 10, max: 10 })
+      .withMessage("PAN number must be 10 characters"),
+
+    body("profile_image")
+      .optional({ nullable: true })
+      .trim()
+  ],
+  updateDriverProfile
 );
 
 router.post(
@@ -195,6 +221,104 @@ router.get(
   "/get_driver_arnings",
   authMiddleware,
   getDriverEarnings
+);
+
+router.post(
+  "/verify_driver_otp",
+  [
+    body("driver_id")
+      .isInt()
+      .withMessage("Valid driver ID is required"),
+
+    body("otp")
+      .trim()
+      .isLength({ min: 6, max: 6 })
+      .isNumeric()
+      .withMessage("OTP must be a valid 6-digit number")
+  ],
+  verifyDriverOTP
+);
+
+router.post(
+  "/upload_document",
+  authMiddleware,
+  uploadDocument.single("file"),
+  uploadDriverDocument
+);
+
+router.get(
+  "/document_status",
+  authMiddleware,
+  getDriverDocumentStatus
+);
+router.post(
+  "/vehicle_details",
+  authMiddleware,
+  upsertVehicleDetails);
+
+router.get(
+  "/vehicle_details",
+  authMiddleware,
+  getVehicleDetails);
+
+
+router.post(
+  "/bank_details",
+  authMiddleware,
+  [
+    body("account_holder_name")
+      .trim()
+      .notEmpty()
+      .withMessage("Account holder name is required")
+      .isLength({ min: 3, max: 150 })
+      .withMessage("Account holder name must be 3–150 characters")
+      .matches(/^[A-Za-z .'-]+$/)
+      .withMessage("Account holder name contains invalid characters"),
+
+    body("bank_name")
+      .trim()
+      .notEmpty()
+      .withMessage("Bank name is required")
+      .isLength({ min: 2, max: 150 })
+      .withMessage("Bank name must be 2–150 characters"),
+
+    body("account_number")
+      .trim()
+      .notEmpty()
+      .withMessage("Account number is required")
+      .isLength({ min: 9, max: 18 })
+      .withMessage("Account number must be 9–18 digits")
+      .isNumeric()
+      .withMessage("Account number must contain only digits"),
+
+    body("ifsc_code")
+      .trim()
+      .notEmpty()
+      .withMessage("IFSC code is required")
+      .toUpperCase()
+      .matches(/^[A-Z]{4}0[A-Z0-9]{6}$/)
+      .withMessage("Invalid IFSC code (e.g. SBIN0001234)"),
+
+    body("branch_name")
+      .optional({ nullable: true, checkFalsy: true })
+      .trim()
+      .isLength({ max: 150 })
+      .withMessage("Branch name must be at most 150 characters"),
+
+    body("upi_id")
+      .optional({ nullable: true, checkFalsy: true })
+      .trim()
+      .matches(/^[a-zA-Z0-9._-]{2,256}@[a-zA-Z]{2,64}$/)
+      .withMessage("Invalid UPI ID (e.g. name@bank)"),
+  ],
+  validate,
+  upsertBankDetails
+);
+
+router.get(
+  "/get_bank_details",
+  authMiddleware,
+  getBankDetails
 );
 
 module.exports = router;

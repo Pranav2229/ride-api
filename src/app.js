@@ -64,8 +64,24 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // Cache-Control
+// app.use((req, res, next) => {
+//     res.setHeader("Cache-Control", "public, max-age=3600, immutable"); // Cache for 1 hour
+//     next();
+// });
+
+app.use(
+    "/public",
+    express.static(path.join(__dirname, "public"), {
+        dotfiles: "deny",
+        extensions: ["html", "css", "js"],
+        maxAge: "1h",           // ✅ cache static for 1 hour
+        immutable: true,
+    })
+);
+
+// 2. Everything else (APIs) = no cache
 app.use((req, res, next) => {
-    res.setHeader("Cache-Control", "public, max-age=3600, immutable"); // Cache for 1 hour
+    res.setHeader("Cache-Control", "no-store");
     next();
 });
 

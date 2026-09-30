@@ -60,35 +60,35 @@ router.post(
 );
 
 router.put(
-    "/update_user_profile",
-    authMiddleware,
-    [
-        body("full_name")
-            .trim()
-            .notEmpty()
-            .withMessage("Full name is required"),
+  "/update_user_profile",
+  authMiddleware,
+  [
+    body("full_name")
+      .trim()
+      .notEmpty()
+      .withMessage("Full name is required"),
 
-        body("email")
-            .trim()
-            .isEmail()
-            .withMessage("Valid email is required"),
+    body("email")
+      .trim()
+      .isEmail()
+      .withMessage("Valid email is required"),
 
-        body("phone")
-            .trim()
-            .isLength({ min: 10, max: 15 })
-            .withMessage("Valid phone number is required"),
+    body("phone")
+      .trim()
+      .isLength({ min: 10, max: 15 })
+      .withMessage("Valid phone number is required"),
 
-        body("gender")
-            .optional({ nullable: true })
-            .trim()
-            .isLength({ max: 10 })
-            .withMessage("Gender must not exceed 10 characters"),
+    body("gender")
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 10 })
+      .withMessage("Gender must not exceed 10 characters"),
 
-        body("profile_image")
-            .optional({ nullable: true })
-            .trim()
-    ],
-    updateUserProfile
+    body("profile_image")
+      .optional({ nullable: true })
+      .trim()
+  ],
+  updateUserProfile
 );
 router.post(
   "/create_ride",
@@ -156,20 +156,20 @@ router.get(
 );
 
 router.post(
-    "/verify_user_otp",
-    [
-        body("user_id")
-            .isInt()
-            .withMessage("Valid user ID is required"),
+  "/verify_user_otp",
+  [
+    body("user_id")
+      .isInt()
+      .withMessage("Valid user ID is required"),
 
-        body("otp")
-            .trim()
-            .isLength({ min: 6, max: 6 })
-            .isNumeric()
-            .withMessage("OTP must be 6 digits")
-    ],
+    body("otp")
+      .trim()
+      .isLength({ min: 6, max: 6 })
+      .isNumeric()
+      .withMessage("OTP must be 6 digits")
+  ],
 
-    verifyUserOTP
+  verifyUserOTP
 );
 
 

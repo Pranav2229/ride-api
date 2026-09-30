@@ -11,6 +11,8 @@ const {
     emitRideCompleted,
     emitDriverLocation
 } = require("../../sockets/RideSocket/ride.socket.js");
+const { generateOTP } = require("../../middleware/otp.js")
+
 
 const loginDriver = async (req, res) => {
     try {
@@ -66,6 +68,45 @@ const loginDriver = async (req, res) => {
             }
         );
 
+        if (Driver.data.verification_status == 'PENDING') {
+            // Get Driver ID
+            const driver_id = Driver.data.driver_id;
+
+
+            // Generate OTP
+            const otp = generateOTP();
+
+
+            // OTP valid for 10 minutes
+            const expiresAt = new Date(
+                Date.now() + 10 * 60 * 1000
+            );
+
+
+            // Store OTP
+            await pool.query(
+                `
+      INSERT INTO public.driver_otps
+      (
+        driver_id,
+        otp,
+        expires_at
+      )
+      VALUES
+      (
+        $1,
+        $2,
+        $3
+      )
+      `,
+                [
+                    driver_id,
+                    otp,
+                    expiresAt
+                ]
+            );
+        }
+
         return res.status(200).json({
             success: true,
             message: "Login successful",
@@ -86,6 +127,100 @@ const loginDriver = async (req, res) => {
 
     }
 };
+
+// const registerDriver = async (req, res) => {
+//     try {
+
+//         // Check Validation Errors
+//         const errors = validationResult(req);
+
+//         if (!errors.isEmpty()) {
+//             return res.status(400).json({
+//                 success: false,
+//                 errors: errors.array()
+//             });
+//         }
+
+//         const {
+//             full_name,
+//             email,
+//             phone,
+//             password,
+//             profile_image,
+//             license_number,
+//             aadhaar_number,
+//             pan_number
+//         } = req.body;
+
+//         // Execute Stored Procedure
+//         const result = await pool.query(
+//             `
+//             CALL public.register_driver(
+//                 $1,  -- full_name
+//                 $2,  -- email
+//                 $3,  -- phone
+//                 $4,  -- password
+//                 $5,  -- profile_image
+//                 $6,  -- license_number
+//                 $7,  -- aadhaar_number
+//                 $8,  -- pan_number
+//                 NULL
+//             )
+//             `,
+//             [
+//                 full_name,
+//                 email,
+//                 phone,
+//                 password,
+//                 profile_image || null,
+//                 license_number,
+//                 aadhaar_number || null,
+//                 pan_number || null
+//             ]
+//         );
+
+//         // Check Procedure Response
+//         if (
+//             !result.rows ||
+//             result.rows.length === 0
+//         ) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: "Unable to register driver"
+//             });
+//         }
+
+//         const response =
+//             result.rows[0].p_response;
+
+//         // Procedure Failed
+//         if (!response.success) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: response.message
+//             });
+//         }
+
+//         // Registration Successful
+//         return res.status(201).json({
+//             success: true,
+//             message: response.message,
+//             data: response.data
+//         });
+
+//     } catch (error) {
+
+//         console.error("Register Driver Error:", error);
+
+//         return res.status(500).json({
+//             success: false,
+//             message: "Internal Server Error"
+//         });
+
+//     }
+// };
+
+// changed at 9-4-2026 for otp 
 
 const registerDriver = async (req, res) => {
     try {
@@ -111,21 +246,22 @@ const registerDriver = async (req, res) => {
             pan_number
         } = req.body;
 
+
         // Execute Stored Procedure
         const result = await pool.query(
             `
-            CALL public.register_driver(
-                $1,  -- full_name
-                $2,  -- email
-                $3,  -- phone
-                $4,  -- password
-                $5,  -- profile_image
-                $6,  -- license_number
-                $7,  -- aadhaar_number
-                $8,  -- pan_number
-                NULL
-            )
-            `,
+      CALL public.register_driver(
+        $1,  -- full_name
+        $2,  -- email
+        $3,  -- phone
+        $4,  -- password
+        $5,  -- profile_image
+        $6,  -- license_number
+        $7,  -- aadhaar_number
+        $8,  -- pan_number
+        NULL
+      )
+      `,
             [
                 full_name,
                 email,
@@ -138,6 +274,7 @@ const registerDriver = async (req, res) => {
             ]
         );
 
+
         // Check Procedure Response
         if (
             !result.rows ||
@@ -149,8 +286,9 @@ const registerDriver = async (req, res) => {
             });
         }
 
-        const response =
-            result.rows[0].p_response;
+
+        const response = result.rows[0].p_response;
+
 
         // Procedure Failed
         if (!response.success) {
@@ -160,12 +298,52 @@ const registerDriver = async (req, res) => {
             });
         }
 
+
+        // Get Driver ID
+        const driver_id = response.data.driver_id;
+
+
+        // Generate OTP
+        const otp = generateOTP();
+
+
+        // OTP valid for 10 minutes
+        const expiresAt = new Date(
+            Date.now() + 10 * 60 * 1000
+        );
+
+
+        // Store OTP
+        await pool.query(
+            `
+      INSERT INTO public.driver_otps
+      (
+        driver_id,
+        otp,
+        expires_at
+      )
+      VALUES
+      (
+        $1,
+        $2,
+        $3
+      )
+      `,
+            [
+                driver_id,
+                otp,
+                expiresAt
+            ]
+        );
+
+
         // Registration Successful
         return res.status(201).json({
             success: true,
             message: response.message,
             data: response.data
         });
+
 
     } catch (error) {
 
@@ -623,6 +801,550 @@ const getDriverEarnings = async (req, res) => {
     }
 };
 
+const verifyDriverOTP = async (req, res) => {
+    try {
+
+        // Check Validation Errors
+        const errors = validationResult(req);
+
+        if (!errors.isEmpty()) {
+            return res.status(400).json({
+                success: false,
+                errors: errors.array()
+            });
+        }
+
+        const {
+            driver_id,
+            otp
+        } = req.body;
+
+        // Execute Stored Procedure
+        const result = await pool.query(
+            `
+      CALL public.verify_driver_otp(
+        $1,  -- driver_id
+        $2,  -- otp
+        NULL
+      )
+      `,
+            [
+                driver_id,
+                otp
+            ]
+        );
+
+        // No response from SP
+        if (!result.rows || result.rows.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: "Unable to verify driver OTP"
+            });
+        }
+
+        const response = result.rows[0].p_response;
+
+
+        // SP returned failure
+        if (!response.success) {
+            return res.status(400).json({
+                success: false,
+                message: response.message
+            });
+        }
+
+        // // Access Token
+        const accessToken = jwt.sign(
+            {
+                userId: response.data.driver_id,
+                fullName: response.data.full_name
+            },
+            process.env.JWT_ACCESS_SECRET,
+            {
+                expiresIn: "15m"
+            }
+        );
+        // // Refresh Token
+        const refreshToken = jwt.sign(
+            {
+                userId: response.data.driver_id
+            },
+            process.env.JWT_REFRESH_SECRET,
+            {
+                expiresIn: "7d"
+            }
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: "Login successful",
+            data: {
+                role: "DRIVER",
+                response,
+                accessToken,
+                refreshToken
+            }
+        });
+
+    } catch (error) {
+
+        console.error("Verify Driver OTP Error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Internal Server Error"
+        });
+
+    }
+};
+
+const uploadDriverDocument = async (req, res) => {
+    try {
+        // const driverId = req.user.userId;
+        const driverId = req.user.userId;
+        console.log("driverIddriverId", driverId);
+
+        const { document_type } = req.body;
+
+        if (!req.file) {
+            return res.status(400).json({
+                success: false,
+                message: "Document file is required",
+            });
+        }
+
+        const allowedDocuments = {
+            DRIVER_PHOTO: "driver_photo",
+            DRIVING_LICENSE: "driving_license",
+            ADDRESS_PROOF: "address_proof",
+            PAN_CARD: "pan_card",
+            EPIC_CARD: "epic_card",
+            VEHICLE_RC: "vehicle_rc",
+            VEHICLE_FITNESS_CERTIFICATE: "vehicle_fitness_certificate",
+            TAXI_PERMIT: "taxi_permit",
+        };
+
+        const column = allowedDocuments[document_type];
+
+        if (!column) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid document type",
+            });
+        }
+
+        const fileUrl = `/uploads/driver-documents/${req.file.filename}`;
+
+        const query = `
+      INSERT INTO public.driver_documents
+      (
+        driver_id,
+        ${column},
+        verification_status,
+        rejection_reason,
+        updated_at
+      )
+      VALUES
+      ($1, $2, 'PENDING', NULL, CURRENT_TIMESTAMP)
+
+      ON CONFLICT (driver_id)
+      DO UPDATE SET
+        ${column} = EXCLUDED.${column},
+        verification_status = 'PENDING',
+        rejection_reason = NULL,
+        verified_by = NULL,
+        verified_at = NULL,
+        updated_at = CURRENT_TIMESTAMP
+
+      RETURNING *;
+    `;
+
+        const result = await pool.query(query, [
+            driverId,
+            fileUrl,
+        ]);
+
+
+        return res.status(200).json({
+            success: true,
+            message: "Document uploaded successfully",
+            data: {
+                driver_id: driverId,
+                document_type,
+                file_name: req.file.originalname,
+                mime_type: req.file.mimetype,
+                file_size: req.file.size,
+                file_url: fileUrl,
+                verification_status: "PENDING",
+            },
+        });
+
+    } catch (error) {
+        console.error("Upload Driver Document Error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Failed to upload document",
+            error: error.message,
+        });
+    }
+};
+
+const getDriverDocumentStatus = async (req, res) => {
+    try {
+        const driverId = req.user.userId;
+
+        const query = `
+            SELECT
+                driver_id,
+                driver_photo,
+                driving_license,
+                address_proof,
+                pan_card,
+                epic_card,
+                vehicle_rc,
+                vehicle_fitness_certificate,
+                taxi_permit,
+                verification_status
+            FROM public.driver_documents
+            WHERE driver_id = $1
+        `;
+
+        const result = await pool.query(query, [driverId]);
+        // Driver has never uploaded any document
+        if (result.rows.length === 0) {
+
+            return res.status(200).json({
+                success: true,
+                documentsUploaded: false,
+                allDocumentsUploaded: false,
+                message: "Please upload your documents.",
+                data: {
+                    driver_id: driverId,
+                    uploaded: [],
+                    missing: [
+                        "DRIVER_PHOTO",
+                        "DRIVING_LICENSE",
+                        "ADDRESS_PROOF",
+                        "PAN_CARD",
+                        "EPIC_CARD",
+                        "VEHICLE_RC",
+                        "VEHICLE_FITNESS_CERTIFICATE",
+                        "TAXI_PERMIT"
+                    ]
+                }
+            });
+        }
+
+        const documents = result.rows[0];
+
+        const documentMap = {
+            DRIVER_PHOTO: documents.driver_photo,
+            DRIVING_LICENSE: documents.driving_license,
+            ADDRESS_PROOF: documents.address_proof,
+            PAN_CARD: documents.pan_card,
+            EPIC_CARD: documents.epic_card,
+            VEHICLE_RC: documents.vehicle_rc,
+            VEHICLE_FITNESS_CERTIFICATE:
+                documents.vehicle_fitness_certificate,
+            TAXI_PERMIT: documents.taxi_permit
+        };
+
+        const uploaded = [];
+        const missing = [];
+
+        Object.entries(documentMap).forEach(([type, file]) => {
+            if (
+                file !== null &&
+                file !== undefined &&
+                file !== ""
+            ) {
+                uploaded.push(type);
+            } else {
+                missing.push(type);
+            }
+        });
+
+
+        return res.status(200).json({
+            success: true,
+
+            // At least one document is uploaded
+            documentsUploaded: uploaded.length > 0,
+
+            // Every required document is uploaded
+            allDocumentsUploaded: missing.length === 0,
+
+            message:
+                missing.length === 0
+                    ? "All documents uploaded."
+                    : "Please upload the remaining documents.",
+
+            data: {
+                driver_id: driverId,
+                uploaded,
+                missing,
+                verification_status:
+                    documents.verification_status
+            }
+        });
+
+    } catch (error) {
+        console.error(
+            "❌ Get Driver Document Status Error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message: "Failed to check document status"
+        });
+    }
+};
+
+const upsertVehicleDetails = async (req, res) => {
+    try {
+        const driverId = req.user.userId;
+        const {
+            vehicle_type,
+            vehicle_brand,
+            vehicle_model,
+            vehicle_number,
+            vehicle_color,
+            seating_capacity,
+            manufacturing_year,
+        } = req.body;
+
+        if (!vehicle_number || !vehicle_type) {
+            return res.status(400).json({
+                success: false,
+                message: "vehicle_number and vehicle_type are required",
+            });
+        }
+
+        const normalizedNumber = vehicle_number.replace(/\s+/g, "").toUpperCase();
+
+        const query = `
+      INSERT INTO public.vehicles
+        (driver_id, vehicle_type, vehicle_brand, vehicle_model, vehicle_number,
+         vehicle_color, seating_capacity, manufacturing_year,
+         is_verified, created_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,false, CURRENT_TIMESTAMP)
+      ON CONFLICT (driver_id)
+      DO UPDATE SET
+        vehicle_type       = EXCLUDED.vehicle_type,
+        vehicle_brand      = EXCLUDED.vehicle_brand,
+        vehicle_model      = EXCLUDED.vehicle_model,
+        vehicle_number     = EXCLUDED.vehicle_number,
+        vehicle_color      = EXCLUDED.vehicle_color,
+        seating_capacity   = EXCLUDED.seating_capacity,
+        manufacturing_year = EXCLUDED.manufacturing_year,
+        is_verified        = false
+      RETURNING *;
+    `;
+
+        const values = [
+            driverId,
+            vehicle_type,
+            vehicle_brand || null,
+            vehicle_model || null,
+            normalizedNumber,
+            vehicle_color || null,
+            seating_capacity ? parseInt(seating_capacity, 10) : null,
+            manufacturing_year ? parseInt(manufacturing_year, 10) : null,
+        ];
+
+        const result = await pool.query(query, values);
+
+        return res.status(200).json({
+            success: true,
+            message: "Vehicle details saved successfully",
+            data: result.rows[0],
+        });
+    } catch (error) {
+        console.error("Upsert Vehicle Error:", error);
+
+        if (error.code === "23505" && error.constraint?.includes("vehicle_number")) {
+            return res.status(409).json({
+                success: false,
+                message: "This vehicle number is already registered",
+            });
+        }
+
+        return res.status(500).json({
+            success: false,
+            message: "Failed to save vehicle details",
+            error: error.message,
+        });
+    }
+};
+
+const getVehicleDetails = async (req, res) => {
+    try {
+        const driverId = req.user.userId;
+        const result = await pool.query(
+            `SELECT * FROM public.vehicles WHERE driver_id = $1`,
+            [driverId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(200).json({
+                success: true,
+                data: null,
+                message: "No vehicle details found",
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: result.rows[0],
+        });
+    } catch (error) {
+        console.error("Get Vehicle Error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Failed to fetch vehicle details",
+        });
+    }
+};
+
+const upsertBankDetails = async (req, res) => {
+    try {
+        const driverId = req.user.userId;
+        const {
+            account_holder_name,
+            bank_name,
+            account_number,
+            ifsc_code,
+            branch_name,
+            upi_id,
+        } = req.body;
+
+        const cleanAccount = String(account_number).trim();
+        const cleanIfsc = ifsc_code.trim().toUpperCase();
+        const cleanUpi = upi_id && upi_id.trim() ? upi_id.trim() : null;
+        const cleanBranch =
+            branch_name && branch_name.trim() ? branch_name.trim() : null;
+
+        // 1. Duplicate account number across other drivers
+        const dupAccount = await pool.query(
+            `SELECT driver_id FROM public.driver_bank_details
+       WHERE account_number = $1 AND driver_id <> $2
+       LIMIT 1`,
+            [cleanAccount, driverId]
+        );
+        if (dupAccount.rows.length > 0) {
+            return res.status(409).json({
+                success: false,
+                message: "This account number is already linked to another driver",
+                field: "account_number",
+            });
+        }
+
+        // 2. Duplicate UPI across other drivers (if provided)
+        if (cleanUpi) {
+            const dupUpi = await pool.query(
+                `SELECT driver_id FROM public.driver_bank_details
+         WHERE upi_id = $1 AND driver_id <> $2
+         LIMIT 1`,
+                [cleanUpi, driverId]
+            );
+            if (dupUpi.rows.length > 0) {
+                return res.status(409).json({
+                    success: false,
+                    message: "This UPI ID is already linked to another driver",
+                    field: "upi_id",
+                });
+            }
+        }
+
+        // 3. Upsert
+        const query = `
+      INSERT INTO public.driver_bank_details
+        (driver_id, account_holder_name, bank_name, account_number,
+         ifsc_code, branch_name, upi_id, verification_status,
+         created_at, updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,'PENDING', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT (driver_id)
+      DO UPDATE SET
+        account_holder_name = EXCLUDED.account_holder_name,
+        bank_name           = EXCLUDED.bank_name,
+        account_number      = EXCLUDED.account_number,
+        ifsc_code           = EXCLUDED.ifsc_code,
+        branch_name         = EXCLUDED.branch_name,
+        upi_id              = EXCLUDED.upi_id,
+        verification_status = 'PENDING',
+        rejection_reason    = NULL,
+        verified_by         = NULL,
+        verified_at         = NULL,
+        updated_at          = CURRENT_TIMESTAMP
+      RETURNING *;
+    `;
+
+        const values = [
+            driverId,
+            account_holder_name.trim(),
+            bank_name.trim(),
+            cleanAccount,
+            cleanIfsc,
+            cleanBranch,
+            cleanUpi,
+        ];
+
+        const result = await pool.query(query, values);
+
+        return res.status(200).json({
+            success: true,
+            message: "Bank details saved successfully",
+            data: result.rows[0],
+        });
+    } catch (error) {
+        console.error("Upsert Bank Details Error:", error);
+
+        if (error.code === "23505") {
+            return res.status(409).json({
+                success: false,
+                message: "Bank details already exist for this driver",
+            });
+        }
+
+        return res.status(500).json({
+            success: false,
+            message: "Failed to save bank details",
+            error: error.message,
+        });
+    }
+};
+
+const getBankDetails = async (req, res) => {
+    try {
+        const driverId = req.user.userId;
+        const result = await pool.query(
+            `SELECT * FROM public.driver_bank_details WHERE driver_id = $1`,
+            [driverId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(200).json({
+                success: true,
+                data: null,
+                message: "No bank details found",
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: result.rows[0],
+        });
+    } catch (error) {
+        console.error("Get Bank Details Error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Failed to fetch bank details",
+        });
+    }
+};
+
 module.exports = {
     loginDriver,
     registerDriver,
@@ -631,5 +1353,12 @@ module.exports = {
     startRide,
     completeRide,
     updateDriverLocation,
-    getDriverEarnings
+    getDriverEarnings,
+    verifyDriverOTP,
+    uploadDriverDocument,
+    getDriverDocumentStatus,
+    upsertVehicleDetails,
+    getVehicleDetails,
+    getBankDetails,
+    upsertBankDetails
 };

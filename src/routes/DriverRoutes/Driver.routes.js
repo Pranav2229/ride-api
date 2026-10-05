@@ -148,9 +148,9 @@ router.post(
   [
     body("ride_id")
       .notEmpty()
-      .withMessage("Ride ID is required")
-      .isInt()
-      .withMessage("Ride ID must be a number"),
+      .withMessage("Ride ID is required"),
+      // .isInt()
+      // .withMessage("Ride ID must be a number"),
 
     body("vehicle_id")
       .notEmpty()

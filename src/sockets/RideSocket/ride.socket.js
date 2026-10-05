@@ -112,12 +112,26 @@ const emitRideCompleted = (
     }
 };
 
+const emitRideCancelled = (userIdOrDriverId, data, recipientType) => {
+  const io = getIO();
+  const socketId =
+    recipientType === "DRIVER"
+      ? onlineDrivers.get(Number(userIdOrDriverId))
+      : onlineUsers.get(Number(userIdOrDriverId));
+
+  if (socketId) {
+    io.to(socketId).emit("ride_cancelled", data);
+  }
+};
+
+
 module.exports = {
     emitRideToDrivers,
     emitRideAccepted,
     emitRideStarted,
     emitDriverLocation,
-    emitRideCompleted
+    emitRideCompleted,
+    emitRideCancelled
 };
 
 // const { getIO } = require("../index");

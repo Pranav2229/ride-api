@@ -7,10 +7,9 @@ const {
   validationResult
 } = require("express-validator");
 const crypto = require("crypto");
-
+const {emitRideCancelled} = require('../../sockets/RideSocket/ride.socket.js')
 const cancelRide = async (req, res) => {
   try {
-
     const errors = validationResult(req);
 
     if (!errors.isEmpty()) {
@@ -42,10 +41,7 @@ const cancelRide = async (req, res) => {
       ]
     );
 
-    if (
-      !result.rows ||
-      result.rows.length === 0
-    ) {
+    if (!result.rows || result.rows.length === 0) {
       return res.status(400).json({
         success: false,
         message: "Unable to cancel ride"
@@ -61,6 +57,37 @@ const cancelRide = async (req, res) => {
       });
     }
 
+    // ✅ EMIT SOCKET EVENTS HERE
+    try {
+      const cancelledData = {
+        ride_id: response.data.ride_id,
+        cancelled_by: response.data.cancelled_by,
+        reason: response.data.reason,
+        cancelled_at: response.data.cancelled_at,
+      };
+
+      // Notify the user
+      if (response.data.user_id) {
+        emitRideCancelled(
+          response.data.user_id,
+          cancelledData,
+          "USER"
+        );
+      }
+
+      // Notify the driver (if assigned)
+      if (response.data.driver_id) {
+        emitRideCancelled(
+          response.data.driver_id,
+          cancelledData,
+          "DRIVER"
+        );
+      }
+    } catch (emitErr) {
+      console.log("emitRideCancelled error:", emitErr.message);
+      // Don't fail the request if socket emit fails
+    }
+
     return res.status(200).json({
       success: true,
       message: response.message,
@@ -68,14 +95,11 @@ const cancelRide = async (req, res) => {
     });
 
   } catch (error) {
-
     console.error(error);
-
     return res.status(500).json({
       success: false,
       message: error.message
     });
-
   }
 };
 

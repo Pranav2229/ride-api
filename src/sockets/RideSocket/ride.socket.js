@@ -4,26 +4,42 @@ const {
     onlineUsers
 } = require("../socketStore");
 
-const emitRideToDrivers = (
-    drivers,
-    rideData
-) => {
+// const emitRideToDrivers = (
+//     drivers,
+//     rideData
+// ) => {
 
+//     const io = getIO();
+
+//     drivers.forEach(driver => {
+
+//         const socketId =
+//             onlineDrivers.get(
+//                 Number(driver.driver_id)
+//             );
+
+//         if (socketId) {
+
+//             io.to(socketId).emit(
+//                 "new_ride",
+//                 rideData
+//             );
+//         }
+//     });
+// };
+
+const emitRideToDrivers = (drivers, rideData) => {
     const io = getIO();
 
+
+
     drivers.forEach(driver => {
-
-        const socketId =
-            onlineDrivers.get(
-                Number(driver.driver_id)
-            );
-
+        const socketId = onlineDrivers.get(Number(driver.driver_id));
         if (socketId) {
-
-            io.to(socketId).emit(
-                "new_ride",
-                rideData
-            );
+            io.to(socketId).emit("new_ride", rideData);
+            console.log(`✅ new_ride emitted to driver ${driver.driver_id}`);
+        } else {
+            console.log(`❌ No socketId for driver ${driver.driver_id}`);
         }
     });
 };
@@ -46,6 +62,14 @@ const emitRideAccepted = (
             "ride_accepted",
             data
         );
+    }
+};
+
+const emitDriverArrived = (userId, data) => {
+    const io = getIO();
+    const socketId = onlineUsers.get(Number(userId));
+    if (socketId) {
+        io.to(socketId).emit("driver_arrived", data);
     }
 };
 
@@ -113,25 +137,34 @@ const emitRideCompleted = (
 };
 
 const emitRideCancelled = (userIdOrDriverId, data, recipientType) => {
-  const io = getIO();
-  const socketId =
-    recipientType === "DRIVER"
-      ? onlineDrivers.get(Number(userIdOrDriverId))
-      : onlineUsers.get(Number(userIdOrDriverId));
+    const io = getIO();
+    const socketId =
+        recipientType === "DRIVER"
+            ? onlineDrivers.get(Number(userIdOrDriverId))
+            : onlineUsers.get(Number(userIdOrDriverId));
 
-  if (socketId) {
-    io.to(socketId).emit("ride_cancelled", data);
-  }
+    if (socketId) {
+        io.to(socketId).emit("ride_cancelled", data);
+    }
 };
 
+const emitRidePaid = (driverId, data) => {
+  const io = getIO();
+  const socketId = onlineDrivers.get(Number(driverId));
+  if (socketId) {
+    io.to(socketId).emit("ride_paid", data);
+  }
+};
 
 module.exports = {
     emitRideToDrivers,
     emitRideAccepted,
+    emitDriverArrived,
     emitRideStarted,
     emitDriverLocation,
     emitRideCompleted,
-    emitRideCancelled
+    emitRideCancelled,
+    emitRidePaid
 };
 
 // const { getIO } = require("../index");

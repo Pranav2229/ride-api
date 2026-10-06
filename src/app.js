@@ -69,6 +69,9 @@ app.use(limiter);
 //     next();
 // });
 
+require("./services/rideScheduler.js")(pool);
+
+
 app.use(
     "/public",
     express.static(path.join(__dirname, "public"), {

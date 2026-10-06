@@ -19,7 +19,12 @@ const {
   upsertVehicleDetails,
   getVehicleDetails,
   upsertBankDetails,
-  getBankDetails
+  getBankDetails,
+  getDriverStatus,
+  toggleOnline,
+  getCurrentRide,
+  markArrived,
+  payForRide
 } = require('../../controllers/DriverAuthentication/Driver.Controller.js');
 const uploadDocument = require("../../middleware/uploadDocument.js")
 const authMiddleware = require("../../middleware/Auth.token.js");
@@ -149,8 +154,8 @@ router.post(
     body("ride_id")
       .notEmpty()
       .withMessage("Ride ID is required"),
-      // .isInt()
-      // .withMessage("Ride ID must be a number"),
+    // .isInt()
+    // .withMessage("Ride ID must be a number"),
 
     body("vehicle_id")
       .notEmpty()
@@ -169,7 +174,15 @@ router.post(
       .notEmpty()
       .withMessage("Ride ID is required")
       .isInt()
-      .withMessage("Ride ID must be a number")
+      .withMessage("Ride ID must be a number"),
+    body("otp")                              // ✅ NEW
+      .trim()
+      .notEmpty()
+      .withMessage("OTP is required")
+      .isLength({ min: 6, max: 6 })
+      .withMessage("OTP must be 6 digits")
+      .isNumeric()
+      .withMessage("OTP must be numeric")
   ],
   startRide
 );
@@ -319,6 +332,37 @@ router.get(
   "/get_bank_details",
   authMiddleware,
   getBankDetails
+);
+
+router.post(
+  "/toggle_online",
+  authMiddleware,
+  [body("is_online").notEmpty().withMessage("is_online is required").isBoolean()],
+  toggleOnline
+);
+
+router.get("/status", authMiddleware, getDriverStatus);
+router.get(
+  "/current_ride",
+  authMiddleware,
+  getCurrentRide
+);
+
+router.post(
+  "/arrived_at_pickup",
+  authMiddleware,
+  [
+    body("ride_id").notEmpty().withMessage("Ride ID is required").isInt().withMessage("Ride ID must be a number"),
+  ],
+  markArrived
+);
+
+
+router.post(
+  "/rides/:id/pay",
+  authMiddleware,
+  [body("payment_method").optional({ nullable: true, checkFalsy: true }).trim()],
+  payForRide
 );
 
 module.exports = router;

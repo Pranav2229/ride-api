@@ -99,6 +99,11 @@ const initSocket = (server) => {
             }
         );
 
+        socket.on("driver_offline", (driverId) => {
+            onlineDrivers.delete(Number(driverId));
+            console.log("🚗 Driver Offline:", driverId);
+        });
+
         // USER ONLINE
         socket.on(
             "user_online",

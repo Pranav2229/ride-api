@@ -1713,81 +1713,236 @@ const markArrived = async (req, res) => {
     }
 };
 
-const payForRide = async (req, res) => {
-  try {
-    const userId = req.user.userId;
-    const { id } = req.params;
-    const { payment_method } = req.body;  // optional: "CASH" | "WALLET" | "UPI" | "CARD"
+// const payForRide = async (req, res) => {
+//   try {
+//     const userId = req.user.userId;
+//     const { id } = req.params;
+//     const { payment_method } = req.body;  // optional: "CASH" | "WALLET" | "UPI" | "CARD"
 
-    // 1. Fetch ride + verify ownership + must be COMPLETED
-    const rideRes = await pool.query(
-      `SELECT id, ride_status, payment_status, payment_method, final_amount
+//     // 1. Fetch ride + verify ownership + must be COMPLETED
+//     const rideRes = await pool.query(
+//       `SELECT id, ride_status, payment_status, payment_method, final_amount
+//        FROM public.rides
+//        WHERE id = $1 AND user_id = $2
+//        LIMIT 1`,
+//       [id, userId]
+//     );
+
+//     if (rideRes.rows.length === 0) {
+//       return res.status(404).json({ success: false, message: "Ride not found" });
+//     }
+
+//     const ride = rideRes.rows[0];
+
+//     if (ride.ride_status !== "COMPLETED") {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Ride is not completed yet",
+//       });
+//     }
+
+//     if (ride.payment_status === "PAID" || ride.payment_status === "COMPLETED") {
+//       return res.status(400).json({
+//         success: false,
+//         message: "This ride has already been paid for",
+//       });
+//     }
+
+//     // 2. Mark as paid
+//     const updateRes = await pool.query(
+//       `UPDATE public.rides
+//        SET
+//          payment_status = 'PAID',
+//          payment_method = COALESCE($1, payment_method),
+//          updated_at = CURRENT_TIMESTAMP
+//        WHERE id = $2 AND user_id = $3
+//        RETURNING id, ride_status, payment_status, payment_method, final_amount`,
+//       [payment_method || null, id, userId]
+//     );
+
+//     // 3. Notify driver (optional but nice)
+//     const driverRes = await pool.query(
+//       `SELECT driver_id FROM public.rides WHERE id = $1`,
+//       [id]
+//     );
+
+//     if (driverRes.rows[0]?.driver_id) {
+//       try {
+//         const { emitRidePaid } = require("../../sockets/RideSocket/ride.socket.js");
+//         emitRidePaid(driverRes.rows[0].driver_id, {
+//           ride_id: Number(id),
+//           payment_status: "PAID",
+//           final_amount: ride.final_amount,
+//         });
+//       } catch (emitErr) {
+//         console.log("Emit ride_paid error:", emitErr.message);
+//       }
+//     }
+
+//     return res.status(200).json({
+//       success: true,
+//       message: "Payment successful",
+//       data: updateRes.rows[0],
+//     });
+//   } catch (error) {
+//     console.error("Pay Ride Error:", error);
+//     return res.status(500).json({ success: false, message: error.message });
+//   }
+// };
+
+const markRidePaid = async (req, res) => {
+    try {
+        const driver_id = req.user.userId;
+        const { id } = req.params;
+        const { payment_method } = req.body; // optional
+
+        // 1. Verify ride belongs to this driver + is COMPLETED
+        const rideRes = await pool.query(
+            `SELECT id, user_id, driver_id, ride_status, payment_status, final_amount, payment_method
        FROM public.rides
-       WHERE id = $1 AND user_id = $2
+       WHERE id = $1 AND driver_id = $2
        LIMIT 1`,
-      [id, userId]
-    );
+            [id, driver_id]
+        );
 
-    if (rideRes.rows.length === 0) {
-      return res.status(404).json({ success: false, message: "Ride not found" });
-    }
+        if (rideRes.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Ride not found or not assigned to you",
+            });
+        }
 
-    const ride = rideRes.rows[0];
+        const ride = rideRes.rows[0];
 
-    if (ride.ride_status !== "COMPLETED") {
-      return res.status(400).json({
-        success: false,
-        message: "Ride is not completed yet",
-      });
-    }
+        if (ride.ride_status !== "COMPLETED") {
+            return res.status(400).json({
+                success: false,
+                message: "Ride is not completed yet",
+            });
+        }
 
-    if (ride.payment_status === "PAID" || ride.payment_status === "COMPLETED") {
-      return res.status(400).json({
-        success: false,
-        message: "This ride has already been paid for",
-      });
-    }
+        if (ride.payment_status === "PAID") {
+            return res.status(400).json({
+                success: false,
+                message: "This ride is already marked as paid",
+            });
+        }
 
-    // 2. Mark as paid
-    const updateRes = await pool.query(
-      `UPDATE public.rides
+        // 2. Mark paid
+        const updateRes = await pool.query(
+            `UPDATE public.rides
        SET
          payment_status = 'PAID',
          payment_method = COALESCE($1, payment_method),
          updated_at = CURRENT_TIMESTAMP
-       WHERE id = $2 AND user_id = $3
+       WHERE id = $2
        RETURNING id, ride_status, payment_status, payment_method, final_amount`,
-      [payment_method || null, id, userId]
-    );
+            [payment_method || null, id]
+        );
 
-    // 3. Notify driver (optional but nice)
-    const driverRes = await pool.query(
-      `SELECT driver_id FROM public.rides WHERE id = $1`,
-      [id]
-    );
+        // 3. Notify customer via socket
+        try {
+            const { emitRidePaid } = require("../../sockets/RideSocket/ride.socket.js");
 
-    if (driverRes.rows[0]?.driver_id) {
-      try {
-        const { emitRidePaid } = require("../../sockets/RideSocket/ride.socket.js");
-        emitRidePaid(driverRes.rows[0].driver_id, {
-          ride_id: Number(id),
-          payment_status: "PAID",
-          final_amount: ride.final_amount,
+            // emit to customer (userId)
+            emitRidePaid(ride.user_id, {
+                ride_id: Number(id),
+                payment_status: "PAID",
+                final_amount: ride.final_amount,
+            }, "USER");
+        } catch (emitErr) {
+            console.log("Emit ride_paid error:", emitErr.message);
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "Payment marked as received",
+            data: updateRes.rows[0],
         });
-      } catch (emitErr) {
-        console.log("Emit ride_paid error:", emitErr.message);
-      }
+    } catch (error) {
+        console.error("Mark Ride Paid Error:", error);
+        return res.status(500).json({ success: false, message: error.message });
     }
+};
 
-    return res.status(200).json({
-      success: true,
-      message: "Payment successful",
-      data: updateRes.rows[0],
-    });
-  } catch (error) {
-    console.error("Pay Ride Error:", error);
-    return res.status(500).json({ success: false, message: error.message });
-  }
+const reportPaymentIssue = async (req, res) => {
+    try {
+        const driver_id = req.user.userId;
+        const { id } = req.params;
+        const { reason, note } = req.body;
+
+        const validReasons = [
+            "CUSTOMER_DIDNT_PAY",
+            "CUSTOMER_PAID_LESS",
+            "CUSTOMER_LEFT_WITHOUT_PAYING",
+            "PAYMENT_APP_ISSUE",
+            "OTHER",
+        ];
+
+        if (!reason || !validReasons.includes(reason)) {
+            return res.status(400).json({
+                success: false,
+                message: "Valid reason is required",
+            });
+        }
+
+        // Verify ride belongs to driver + completed
+        const rideRes = await pool.query(
+            `SELECT id, user_id, driver_id, ride_status, payment_status, final_amount
+       FROM public.rides
+       WHERE id = $1 AND driver_id = $2
+       LIMIT 1`,
+            [id, driver_id]
+        );
+
+        if (rideRes.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Ride not found or not assigned to you",
+            });
+        }
+
+        const ride = rideRes.rows[0];
+
+        if (ride.ride_status !== "COMPLETED") {
+            return res.status(400).json({
+                success: false,
+                message: "Ride is not completed",
+            });
+        }
+
+        if (ride.payment_status === "PAID") {
+            return res.status(400).json({
+                success: false,
+                message: "Ride is already paid",
+            });
+        }
+
+        // Update payment status to FAILED with reason
+        const updateRes = await pool.query(
+            `UPDATE public.rides
+       SET
+         payment_status = 'FAILED',
+         payment_failure_reason = $1,
+         payment_failure_note = $2,
+         updated_at = CURRENT_TIMESTAMP
+       WHERE id = $3
+       RETURNING id, ride_status, payment_status, final_amount`,
+            [reason, note || null, id]
+        );
+
+        // Optional: notify admin via a notification row or socket
+        // Optional: emit to customer (rare) — skip for now
+
+        return res.status(200).json({
+            success: true,
+            message: "Payment issue reported",
+            data: updateRes.rows[0],
+        });
+    } catch (error) {
+        console.error("Report Payment Issue Error:", error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
 };
 
 module.exports = {
@@ -1810,5 +1965,7 @@ module.exports = {
     getDriverStatus,
     getCurrentRide,
     markArrived,
-    payForRide
+    // payForRide
+    markRidePaid,
+    reportPaymentIssue
 };

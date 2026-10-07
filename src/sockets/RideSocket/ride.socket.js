@@ -148,12 +148,16 @@ const emitRideCancelled = (userIdOrDriverId, data, recipientType) => {
     }
 };
 
-const emitRidePaid = (driverId, data) => {
-  const io = getIO();
-  const socketId = onlineDrivers.get(Number(driverId));
-  if (socketId) {
-    io.to(socketId).emit("ride_paid", data);
-  }
+const emitRidePaid = (recipientId, data, recipientType = "USER") => {
+    const io = getIO();
+    const socketId =
+        recipientType === "DRIVER"
+            ? onlineDrivers.get(Number(recipientId))
+            : onlineUsers.get(Number(recipientId));
+
+    if (socketId) {
+        io.to(socketId).emit("ride_paid", data);
+    }
 };
 
 module.exports = {

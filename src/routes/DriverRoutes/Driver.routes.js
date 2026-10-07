@@ -24,7 +24,9 @@ const {
   toggleOnline,
   getCurrentRide,
   markArrived,
-  payForRide
+  // payForRide
+  markRidePaid,
+  reportPaymentIssue
 } = require('../../controllers/DriverAuthentication/Driver.Controller.js');
 const uploadDocument = require("../../middleware/uploadDocument.js")
 const authMiddleware = require("../../middleware/Auth.token.js");
@@ -358,11 +360,28 @@ router.post(
 );
 
 
+// router.post(
+//   "/rides/:id/pay",
+//   authMiddleware,
+//   [body("payment_method").optional({ nullable: true, checkFalsy: true }).trim()],
+//   payForRide
+// );
+
 router.post(
-  "/rides/:id/pay",
+  "/rides/:id/mark-paid",
   authMiddleware,
   [body("payment_method").optional({ nullable: true, checkFalsy: true }).trim()],
-  payForRide
+  markRidePaid
+);
+
+router.post(
+  "/rides/:id/report-payment-issue",
+  authMiddleware,
+  [
+    body("reason").trim().notEmpty().withMessage("Reason is required"),
+    body("note").optional({ nullable: true, checkFalsy: true }).trim().isLength({ max: 500 }),
+  ],
+  reportPaymentIssue
 );
 
 module.exports = router;

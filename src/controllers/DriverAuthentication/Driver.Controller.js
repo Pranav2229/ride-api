@@ -1573,45 +1573,177 @@ const getBankDetails = async (req, res) => {
     }
 };
 
+// const toggleOnline = async (req, res) => {
+//     try {
+//         const driver_id = req.user.userId;
+//         const { is_online } = req.body;
+
+//         if (typeof is_online !== "boolean") {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: "is_online must be a boolean",
+//             });
+//         }
+
+//         const result = await pool.query(
+//             `UPDATE public.drivers
+//        SET is_online = $1, updated_at = CURRENT_TIMESTAMP
+//        WHERE id = $2
+//        RETURNING id, is_online`,
+//             [is_online, driver_id]
+//         );
+
+//         if (result.rows.length === 0) {
+//             return res.status(404).json({
+//                 success: false,
+//                 message: "Driver not found",
+//             });
+//         }
+
+//         return res.status(200).json({
+//             success: true,
+//             message: is_online ? "You are now online" : "You are now offline",
+//             data: result.rows[0],
+//         });
+//     } catch (error) {
+//         console.error("Toggle Online Error:", error);
+//         return res.status(500).json({
+//             success: false,
+//             message: error.message,
+//         });
+//     }
+// };
+
 const toggleOnline = async (req, res) => {
-    try {
-        const driver_id = req.user.userId;
-        const { is_online } = req.body;
+  try {
+    const driver_id = req.user.userId;
+    const { is_online } = req.body;
 
-        if (typeof is_online !== "boolean") {
-            return res.status(400).json({
-                success: false,
-                message: "is_online must be a boolean",
-            });
-        }
-
-        const result = await pool.query(
-            `UPDATE public.drivers
-       SET is_online = $1, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $2
-       RETURNING id, is_online`,
-            [is_online, driver_id]
-        );
-
-        if (result.rows.length === 0) {
-            return res.status(404).json({
-                success: false,
-                message: "Driver not found",
-            });
-        }
-
-        return res.status(200).json({
-            success: true,
-            message: is_online ? "You are now online" : "You are now offline",
-            data: result.rows[0],
-        });
-    } catch (error) {
-        console.error("Toggle Online Error:", error);
-        return res.status(500).json({
-            success: false,
-            message: error.message,
-        });
+    if (typeof is_online !== "boolean") {
+      return res.status(400).json({
+        success: false,
+        message: "is_online must be a boolean",
+      });
     }
+
+    // ✅ Only block going ONLINE — allow going offline anytime
+    if (is_online === true) {
+      // 1. Documents
+      const docCheck = await pool.query(
+        `SELECT
+           driver_photo, driving_license, address_proof, pan_card,
+           epic_card, vehicle_rc, vehicle_fitness_certificate, taxi_permit,
+           verification_status
+         FROM public.driver_documents
+         WHERE driver_id = $1`,
+        [driver_id]
+      );
+
+      const requiredDocs = [
+        "driver_photo", "driving_license", "address_proof", "pan_card",
+        "epic_card", "vehicle_rc", "vehicle_fitness_certificate", "taxi_permit",
+      ];
+
+      if (docCheck.rows.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Please upload all required documents before going online.",
+          field: "documents",
+        });
+      }
+
+      const docs = docCheck.rows[0];
+      const missingDocs = requiredDocs.filter((k) => !docs[k]);
+
+      if (missingDocs.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: `Please upload all documents. ${missingDocs.length} still missing.`,
+          field: "documents",
+        });
+      }
+
+      if (docs.verification_status !== "APPROVED") {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Your documents are pending verification. You'll be notified once approved.",
+          field: "documents",
+          verification_status: docs.verification_status,
+        });
+      }
+
+      // 2. Vehicle
+      const vehicleCheck = await pool.query(
+        `SELECT id, is_verified FROM public.vehicles
+         WHERE driver_id = $1 LIMIT 1`,
+        [driver_id]
+      );
+
+      if (vehicleCheck.rows.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Please add your vehicle details before going online.",
+          field: "vehicle",
+        });
+      }
+
+      if (vehicleCheck.rows[0].is_verified !== true) {
+        return res.status(400).json({
+          success: false,
+          message: "Your vehicle is pending verification.",
+          field: "vehicle",
+        });
+      }
+
+      // 3. Bank
+      const bankCheck = await pool.query(
+        `SELECT id, verification_status FROM public.driver_bank_details
+         WHERE driver_id = $1 LIMIT 1`,
+        [driver_id]
+      );
+
+      if (bankCheck.rows.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Please add your bank details before going online.",
+          field: "bank",
+        });
+      }
+
+      if (bankCheck.rows[0].verification_status !== "APPROVED") {
+        return res.status(400).json({
+          success: false,
+          message: "Your bank details are pending verification.",
+          field: "bank",
+        });
+      }
+    }
+
+    // ✅ All checks passed — proceed
+    const result = await pool.query(
+      `UPDATE public.drivers
+       SET is_online = $1,
+           is_available = $1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2
+       RETURNING id, is_online, is_available`,
+      [is_online, driver_id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Driver not found" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: is_online ? "You are now online" : "You are now offline",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error("Toggle Online Error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
 };
 
 const getDriverStatus = async (req, res) => {
@@ -2150,6 +2282,109 @@ const createDriverNotification = async (client, driverId, { title, message, type
     }
 };
 
+const getOnboardingStatus = async (req, res) => {
+  try {
+    const driver_id = req.user.userId;
+
+    // ---------- DOCUMENTS ----------
+    const docRes = await pool.query(
+      `SELECT
+         driver_photo, driving_license, address_proof, pan_card, epic_card,
+         vehicle_rc, vehicle_fitness_certificate, taxi_permit,
+         verification_status
+       FROM public.driver_documents
+       WHERE driver_id = $1`,
+      [driver_id]
+    );
+
+    const requiredDocs = [
+      "driver_photo",
+      "driving_license",
+      "address_proof",
+      "pan_card",
+      "epic_card",
+      "vehicle_rc",
+      "vehicle_fitness_certificate",
+      "taxi_permit",
+    ];
+
+    let documentsSubmitted = false;
+    let documentsPending = [...requiredDocs];
+    let documentVerificationStatus = null;
+
+    if (docRes.rows.length > 0) {
+      const doc = docRes.rows[0];
+      documentVerificationStatus = doc.verification_status;
+      documentsPending = requiredDocs.filter((k) => !doc[k]);
+      documentsSubmitted = documentsPending.length === 0;
+    }
+
+    const documentsApproved =
+      documentsSubmitted && documentVerificationStatus === "APPROVED";
+
+    // ---------- VEHICLE ----------
+    const vehicleRes = await pool.query(
+      `SELECT id, vehicle_type, vehicle_number, vehicle_model, vehicle_color,
+              is_verified
+       FROM public.vehicles
+       WHERE driver_id = $1
+       LIMIT 1`,
+      [driver_id]
+    );
+
+    const vehicleSubmitted = vehicleRes.rows.length > 0;
+    const vehicle = vehicleSubmitted ? vehicleRes.rows[0] : null;
+    const vehicleApproved = vehicleSubmitted && vehicle?.is_verified === true;
+
+    // ---------- BANK ----------
+    const bankRes = await pool.query(
+      `SELECT id, account_holder_name, bank_name, account_number, ifsc_code,
+              verification_status
+       FROM public.driver_bank_details
+       WHERE driver_id = $1
+       LIMIT 1`,
+      [driver_id]
+    );
+
+    const bankSubmitted = bankRes.rows.length > 0;
+    const bank = bankSubmitted ? bankRes.rows[0] : null;
+    const bankApproved = bankSubmitted && bank?.verification_status === "APPROVED";
+
+    // ---------- OVERALL ----------
+    const canGoOnline = documentsApproved && vehicleApproved && bankApproved;
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        can_go_online: canGoOnline,
+
+        documents: {
+          submitted: documentsSubmitted,
+          approved: documentsApproved,
+          pending: documentsPending,
+          pending_count: documentsPending.length,
+          verification_status: documentVerificationStatus,
+        },
+
+        vehicle: {
+          submitted: vehicleSubmitted,
+          approved: vehicleApproved,
+          data: vehicle,
+        },
+
+        bank: {
+          submitted: bankSubmitted,
+          approved: bankApproved,
+          data: bank,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Get Onboarding Status Error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
     loginDriver,
     registerDriver,
@@ -2176,7 +2411,8 @@ module.exports = {
     getDriverRides,
     getDriverWallet,
     getDriverNotifications,
-  markDriverNotificationRead,
-  markAllDriverNotificationsRead,
-  createDriverNotification,
+    markDriverNotificationRead,
+    markAllDriverNotificationsRead,
+    createDriverNotification,
+    getOnboardingStatus
 };

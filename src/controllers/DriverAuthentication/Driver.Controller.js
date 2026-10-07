@@ -1945,6 +1945,211 @@ const reportPaymentIssue = async (req, res) => {
     }
 };
 
+const getDriverRides = async (req, res) => {
+    try {
+        const driver_id = req.user.userId;
+
+        const result = await pool.query(
+            `CALL public.get_driver_rides($1, NULL)`,
+            [driver_id]
+        );
+
+        if (!result.rows || result.rows.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: "Unable to fetch rides",
+            });
+        }
+
+        const response = result.rows[0].p_response;
+
+        if (!response.success) {
+            return res.status(400).json({
+                success: false,
+                message: response.message,
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: response,
+        });
+    } catch (error) {
+        console.error("Get Driver Rides Error:", error);
+        return res.status(500).json({
+            success: false,
+            message: error.message,
+        });
+    }
+};
+
+const getDriverWallet = async (req, res) => {
+    try {
+        const driver_id = req.user.userId;
+
+        const result = await pool.query(
+            `CALL public.get_driver_wallet($1, NULL)`,
+            [driver_id]
+        );
+
+        if (!result.rows || result.rows.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: "Unable to fetch wallet",
+            });
+        }
+
+        const response = result.rows[0].p_response;
+
+        if (!response.success) {
+            return res.status(400).json({
+                success: false,
+                message: response.message,
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: response.data,
+        });
+    } catch (error) {
+        console.error("Get Driver Wallet Error:", error);
+        return res.status(500).json({
+            success: false,
+            message: error.message,
+        });
+    }
+};
+
+const getDriverNotifications = async (req, res) => {
+    try {
+        const driver_id = req.user.userId;
+
+        const limit = Math.min(Number(req.query.limit) || 50, 100);
+        const offset = Math.max(Number(req.query.offset) || 0, 0);
+        const unreadOnly = req.query.unreadOnly === "true";
+
+        const whereClause = unreadOnly
+            ? "WHERE driver_id = $1 AND is_read = false"
+            : "WHERE driver_id = $1";
+
+        const result = await pool.query(
+            `SELECT id, title, message, type, is_read, created_at
+       FROM public.driver_notifications
+       ${whereClause}
+       ORDER BY created_at DESC
+       LIMIT $2 OFFSET $3`,
+            [driver_id, limit, offset]
+        );
+
+        const unreadRes = await pool.query(
+            `SELECT COUNT(*)::int AS count
+       FROM public.driver_notifications
+       WHERE driver_id = $1 AND is_read = false`,
+            [driver_id]
+        );
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                notifications: result.rows,
+                unreadCount: unreadRes.rows[0].count,
+            },
+        });
+    } catch (error) {
+        console.error("Get Driver Notifications Error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Failed to fetch notifications",
+        });
+    }
+};
+
+// ============================================================
+// POST /driver/notifications/:id/read
+// ============================================================
+const markDriverNotificationRead = async (req, res) => {
+    try {
+        const driver_id = req.user.userId;
+        const { id } = req.params;
+
+        const result = await pool.query(
+            `UPDATE public.driver_notifications
+       SET is_read = true
+       WHERE id = $1 AND driver_id = $2
+       RETURNING id, is_read`,
+            [id, driver_id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Notification not found",
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "Marked as read",
+            data: result.rows[0],
+        });
+    } catch (error) {
+        console.error("Mark Driver Notif Read Error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Failed to mark as read",
+        });
+    }
+};
+
+// ============================================================
+// POST /driver/notifications/read_all
+// ============================================================
+const markAllDriverNotificationsRead = async (req, res) => {
+    try {
+        const driver_id = req.user.userId;
+
+        const result = await pool.query(
+            `UPDATE public.driver_notifications
+       SET is_read = true
+       WHERE driver_id = $1 AND is_read = false`,
+            [driver_id]
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: "All marked as read",
+            data: { updated: result.rowCount },
+        });
+    } catch (error) {
+        console.error("Mark All Driver Notif Read Error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Failed to mark all as read",
+        });
+    }
+};
+
+// ============================================================
+// Internal helper — create a driver notification
+// Call from other controllers when something happens
+// ============================================================
+const createDriverNotification = async (client, driverId, { title, message, type }) => {
+    try {
+        const result = await client.query(
+            `INSERT INTO public.driver_notifications
+         (driver_id, title, message, type, is_read, created_at)
+       VALUES ($1, $2, $3, $4, false, CURRENT_TIMESTAMP)
+       RETURNING *`,
+            [driverId, title, message, type]
+        );
+        return result.rows[0];
+    } catch (error) {
+        console.error("Create Driver Notification Error:", error);
+        return null;
+    }
+};
+
 module.exports = {
     loginDriver,
     registerDriver,
@@ -1967,5 +2172,11 @@ module.exports = {
     markArrived,
     // payForRide
     markRidePaid,
-    reportPaymentIssue
+    reportPaymentIssue,
+    getDriverRides,
+    getDriverWallet,
+    getDriverNotifications,
+  markDriverNotificationRead,
+  markAllDriverNotificationsRead,
+  createDriverNotification,
 };

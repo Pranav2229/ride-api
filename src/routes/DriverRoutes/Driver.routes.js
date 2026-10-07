@@ -26,7 +26,13 @@ const {
   markArrived,
   // payForRide
   markRidePaid,
-  reportPaymentIssue
+  reportPaymentIssue,
+  getDriverRides,
+  getDriverWallet,
+  getDriverNotifications,
+  markDriverNotificationRead,
+  markAllDriverNotificationsRead,
+  createDriverNotification,
 } = require('../../controllers/DriverAuthentication/Driver.Controller.js');
 const uploadDocument = require("../../middleware/uploadDocument.js")
 const authMiddleware = require("../../middleware/Auth.token.js");
@@ -382,6 +388,36 @@ router.post(
     body("note").optional({ nullable: true, checkFalsy: true }).trim().isLength({ max: 500 }),
   ],
   reportPaymentIssue
+);
+
+router.get(
+  "/get_driver_rides",
+  authMiddleware,
+  getDriverRides
+);
+
+router.get(
+  "/get_driver_wallet",
+  authMiddleware,
+  getDriverWallet
+);
+
+router.get(
+  "/notifications",
+  authMiddleware,
+  getDriverNotifications
+);
+
+router.post(
+  "/notifications/read_all",
+  authMiddleware,
+  markAllDriverNotificationsRead
+);
+
+router.post(
+  "/notifications/:id/read",
+  authMiddleware,
+  markDriverNotificationRead
 );
 
 module.exports = router;

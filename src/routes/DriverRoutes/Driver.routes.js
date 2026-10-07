@@ -33,6 +33,7 @@ const {
   markDriverNotificationRead,
   markAllDriverNotificationsRead,
   createDriverNotification,
+  getOnboardingStatus
 } = require('../../controllers/DriverAuthentication/Driver.Controller.js');
 const uploadDocument = require("../../middleware/uploadDocument.js")
 const authMiddleware = require("../../middleware/Auth.token.js");
@@ -418,6 +419,12 @@ router.post(
   "/notifications/:id/read",
   authMiddleware,
   markDriverNotificationRead
+);
+
+router.get(
+  "/onboarding_status",
+  authMiddleware,
+  getOnboardingStatus
 );
 
 module.exports = router;

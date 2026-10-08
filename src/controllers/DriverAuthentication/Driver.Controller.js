@@ -1218,6 +1218,119 @@ const uploadDriverDocument = async (req, res) => {
     }
 };
 
+// const getDriverDocumentStatus = async (req, res) => {
+//     try {
+//         const driverId = req.user.userId;
+
+//         const query = `
+//             SELECT
+//                 driver_id,
+//                 driver_photo,
+//                 driving_license,
+//                 address_proof,
+//                 pan_card,
+//                 epic_card,
+//                 vehicle_rc,
+//                 vehicle_fitness_certificate,
+//                 taxi_permit,
+//                 verification_status
+//             FROM public.driver_documents
+//             WHERE driver_id = $1
+//         `;
+
+//         const result = await pool.query(query, [driverId]);
+//         // Driver has never uploaded any document
+//         if (result.rows.length === 0) {
+
+//             return res.status(200).json({
+//                 success: true,
+//                 documentsUploaded: false,
+//                 allDocumentsUploaded: false,
+//                 message: "Please upload your documents.",
+//                 data: {
+//                     driver_id: driverId,
+//                     uploaded: [],
+//                     missing: [
+//                         "DRIVER_PHOTO",
+//                         "DRIVING_LICENSE",
+//                         "ADDRESS_PROOF",
+//                         "PAN_CARD",
+//                         "EPIC_CARD",
+//                         "VEHICLE_RC",
+//                         "VEHICLE_FITNESS_CERTIFICATE",
+//                         "TAXI_PERMIT"
+//                     ]
+//                 }
+//             });
+//         }
+
+//         const documents = result.rows[0];
+
+//         const documentMap = {
+//             DRIVER_PHOTO: documents.driver_photo,
+//             DRIVING_LICENSE: documents.driving_license,
+//             ADDRESS_PROOF: documents.address_proof,
+//             PAN_CARD: documents.pan_card,
+//             EPIC_CARD: documents.epic_card,
+//             VEHICLE_RC: documents.vehicle_rc,
+//             VEHICLE_FITNESS_CERTIFICATE:
+//                 documents.vehicle_fitness_certificate,
+//             TAXI_PERMIT: documents.taxi_permit
+//         };
+
+//         const uploaded = [];
+//         const missing = [];
+
+//         Object.entries(documentMap).forEach(([type, file]) => {
+//             if (
+//                 file !== null &&
+//                 file !== undefined &&
+//                 file !== ""
+//             ) {
+//                 uploaded.push(type);
+//             } else {
+//                 missing.push(type);
+//             }
+//         });
+
+
+//         return res.status(200).json({
+//             success: true,
+
+//             // At least one document is uploaded
+//             documentsUploaded: uploaded.length > 0,
+
+//             // Every required document is uploaded
+//             allDocumentsUploaded: missing.length === 0,
+
+//             message:
+//                 missing.length === 0
+//                     ? "All documents uploaded."
+//                     : "Please upload the remaining documents.",
+
+//             data: {
+//                 driver_id: driverId,
+//                 uploaded,
+//                 missing,
+//                 verification_status:
+//                     documents.verification_status
+//             }
+//         });
+
+//     } catch (error) {
+//         console.error(
+//             "❌ Get Driver Document Status Error:",
+//             error
+//         );
+
+//         return res.status(500).json({
+//             success: false,
+//             message: "Failed to check document status"
+//         });
+//     }
+// };
+
+
 const getDriverDocumentStatus = async (req, res) => {
     try {
         const driverId = req.user.userId;
@@ -1239,9 +1352,9 @@ const getDriverDocumentStatus = async (req, res) => {
         `;
 
         const result = await pool.query(query, [driverId]);
+
         // Driver has never uploaded any document
         if (result.rows.length === 0) {
-
             return res.status(200).json({
                 success: true,
                 documentsUploaded: false,
@@ -1255,7 +1368,6 @@ const getDriverDocumentStatus = async (req, res) => {
                         "DRIVING_LICENSE",
                         "ADDRESS_PROOF",
                         "PAN_CARD",
-                        "EPIC_CARD",
                         "VEHICLE_RC",
                         "VEHICLE_FITNESS_CERTIFICATE",
                         "TAXI_PERMIT"
@@ -1266,12 +1378,12 @@ const getDriverDocumentStatus = async (req, res) => {
 
         const documents = result.rows[0];
 
-        const documentMap = {
+        // EPIC_CARD is optional
+        const requiredDocumentMap = {
             DRIVER_PHOTO: documents.driver_photo,
             DRIVING_LICENSE: documents.driving_license,
             ADDRESS_PROOF: documents.address_proof,
             PAN_CARD: documents.pan_card,
-            EPIC_CARD: documents.epic_card,
             VEHICLE_RC: documents.vehicle_rc,
             VEHICLE_FITNESS_CERTIFICATE:
                 documents.vehicle_fitness_certificate,
@@ -1281,7 +1393,8 @@ const getDriverDocumentStatus = async (req, res) => {
         const uploaded = [];
         const missing = [];
 
-        Object.entries(documentMap).forEach(([type, file]) => {
+        // Check required documents only
+        Object.entries(requiredDocumentMap).forEach(([type, file]) => {
             if (
                 file !== null &&
                 file !== undefined &&
@@ -1293,6 +1406,16 @@ const getDriverDocumentStatus = async (req, res) => {
             }
         });
 
+        // EPIC Card is optional.
+        // If uploaded, show it as uploaded,
+        // but never add it to missing.
+        if (
+            documents.epic_card !== null &&
+            documents.epic_card !== undefined &&
+            documents.epic_card !== ""
+        ) {
+            uploaded.push("EPIC_CARD");
+        }
 
         return res.status(200).json({
             success: true,
@@ -1300,13 +1423,13 @@ const getDriverDocumentStatus = async (req, res) => {
             // At least one document is uploaded
             documentsUploaded: uploaded.length > 0,
 
-            // Every required document is uploaded
+            // Only REQUIRED documents are checked here
             allDocumentsUploaded: missing.length === 0,
 
             message:
                 missing.length === 0
-                    ? "All documents uploaded."
-                    : "Please upload the remaining documents.",
+                    ? "All required documents uploaded."
+                    : "Please upload the remaining required documents.",
 
             data: {
                 driver_id: driverId,
@@ -1639,10 +1762,20 @@ const toggleOnline = async (req, res) => {
         [driver_id]
       );
 
-      const requiredDocs = [
-        "driver_photo", "driving_license", "address_proof", "pan_card",
-        "epic_card", "vehicle_rc", "vehicle_fitness_certificate", "taxi_permit",
-      ];
+    //   const requiredDocs = [
+    //     "driver_photo", "driving_license", "address_proof", "pan_card",
+    //     "epic_card", "vehicle_rc", "vehicle_fitness_certificate", "taxi_permit",
+    //   ];
+
+    const requiredDocs = [
+    "driver_photo",
+    "driving_license",
+    "address_proof",
+    "pan_card",
+    "vehicle_rc",
+    "vehicle_fitness_certificate",
+    "taxi_permit",
+];
 
       if (docCheck.rows.length === 0) {
         return res.status(400).json({
@@ -2302,7 +2435,7 @@ const getOnboardingStatus = async (req, res) => {
       "driving_license",
       "address_proof",
       "pan_card",
-      "epic_card",
+    //   "epic_card",
       "vehicle_rc",
       "vehicle_fitness_certificate",
       "taxi_permit",

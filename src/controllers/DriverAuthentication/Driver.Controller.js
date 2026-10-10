@@ -2385,6 +2385,67 @@ const getOnboardingStatus = async (req, res) => {
   }
 };
 
+const getPendingPayments = async (req, res) => {
+  try {
+    const driver_id = req.user.userId;
+
+    const result = await pool.query(
+      `SELECT
+         r.id AS ride_id,
+         r.ride_unique_id,
+         r.pickup_address,
+         r.drop_address,
+         r.distance,
+         r.final_amount,
+         r.payment_method,
+         r.payment_status,
+         r.ride_completed_at,
+         r.created_at,
+         u.full_name AS customer_name,
+         u.phone AS customer_phone
+       FROM public.rides r
+       LEFT JOIN public.users u ON u.id = r.user_id
+       WHERE r.driver_id = $1
+         AND r.ride_status = 'COMPLETED'
+         AND r.payment_status = 'PENDING'
+       ORDER BY r.ride_completed_at DESC NULLS LAST, r.created_at DESC`,
+      [driver_id]
+    );
+
+    const total = result.rows.reduce(
+      (sum, r) => sum + Number(r.final_amount || 0),
+      0
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        count: result.rows.length,
+        total_pending: Math.round(total * 100) / 100,
+        rides: result.rows.map((r) => ({
+          ride_id: r.ride_id,
+          ride_unique_id: r.ride_unique_id,
+          pickup_address: r.pickup_address,
+          drop_address: r.drop_address,
+          distance: r.distance,
+          final_amount: Number(r.final_amount || 0),
+          payment_method: r.payment_method,
+          payment_status: r.payment_status,
+          completed_at: r.ride_completed_at,
+          created_at: r.created_at,
+          customer: {
+            full_name: r.customer_name,
+            phone: r.customer_phone,
+          },
+        })),
+      },
+    });
+  } catch (error) {
+    console.error("Get Pending Payments Error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
     loginDriver,
     registerDriver,
@@ -2414,5 +2475,6 @@ module.exports = {
     markDriverNotificationRead,
     markAllDriverNotificationsRead,
     createDriverNotification,
-    getOnboardingStatus
+    getOnboardingStatus,
+    getPendingPayments
 };

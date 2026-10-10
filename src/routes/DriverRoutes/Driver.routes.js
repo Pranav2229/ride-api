@@ -33,6 +33,7 @@ const {
   markDriverNotificationRead,
   markAllDriverNotificationsRead,
   createDriverNotification,
+  getPendingPayments,
   getOnboardingStatus
 } = require('../../controllers/DriverAuthentication/Driver.Controller.js');
 const uploadDocument = require("../../middleware/uploadDocument.js")
@@ -426,5 +427,7 @@ router.get(
   authMiddleware,
   getOnboardingStatus
 );
+
+router.get("/pending_payments", authMiddleware, getPendingPayments);
 
 module.exports = router;

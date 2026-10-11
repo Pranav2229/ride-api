@@ -1404,7 +1404,7 @@ const getDriverDocumentStatus = async (req, res) => {
 
         // Check required
         requiredDocs.forEach((type) => {
-            const file = documentMap[type];
+            const file = requiredDocumentMap[type];
             if (file !== null && file !== undefined && file !== "") {
                 uploaded.push(type);
             } else {
@@ -1414,7 +1414,7 @@ const getDriverDocumentStatus = async (req, res) => {
 
         // Check optional — mark as uploaded if present, but don't fail if missing
         optionalDocs.forEach((type) => {
-            const file = documentMap[type];
+            const file = requiredDocumentMap[type];
             if (file !== null && file !== undefined && file !== "") {
                 uploaded.push(type);
             } else {

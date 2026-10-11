@@ -1223,25 +1223,39 @@ const getDriverDocumentStatus = async (req, res) => {
         const driverId = req.user.userId;
 
         const query = `
-            SELECT
-                driver_id,
-                driver_photo,
-                driving_license,
-                address_proof,
-                pan_card,
-                epic_card,
-                vehicle_rc,
-                vehicle_fitness_certificate,
-                taxi_permit,
-                verification_status
-            FROM public.driver_documents
-            WHERE driver_id = $1
-        `;
+      SELECT
+        driver_id,
+        driver_photo,
+        driving_license,
+        address_proof,
+        pan_card,
+        epic_card,
+        vehicle_rc,
+        vehicle_fitness_certificate,
+        taxi_permit,
+        verification_status
+      FROM public.driver_documents
+      WHERE driver_id = $1
+    `;
 
         const result = await pool.query(query, [driverId]);
+
+        // ✅ Required documents (EPIC_CARD removed)
+        const requiredDocs = [
+            "DRIVER_PHOTO",
+            "DRIVING_LICENSE",
+            "ADDRESS_PROOF",
+            "PAN_CARD",
+            "VEHICLE_RC",
+            "VEHICLE_FITNESS_CERTIFICATE",
+            "TAXI_PERMIT",
+        ];
+
+        // ✅ Optional documents (tracked but not required)
+        const optionalDocs = ["EPIC_CARD"];
+
         // Driver has never uploaded any document
         if (result.rows.length === 0) {
-
             return res.status(200).json({
                 success: true,
                 documentsUploaded: false,
@@ -1250,17 +1264,11 @@ const getDriverDocumentStatus = async (req, res) => {
                 data: {
                     driver_id: driverId,
                     uploaded: [],
-                    missing: [
-                        "DRIVER_PHOTO",
-                        "DRIVING_LICENSE",
-                        "ADDRESS_PROOF",
-                        "PAN_CARD",
-                        "EPIC_CARD",
-                        "VEHICLE_RC",
-                        "VEHICLE_FITNESS_CERTIFICATE",
-                        "TAXI_PERMIT"
-                    ]
-                }
+                    missing: [...requiredDocs],
+                    optional_missing: [...optionalDocs],
+                    required: requiredDocs,
+                    optional: optionalDocs,
+                },
             });
         }
 
@@ -1273,26 +1281,33 @@ const getDriverDocumentStatus = async (req, res) => {
             PAN_CARD: documents.pan_card,
             EPIC_CARD: documents.epic_card,
             VEHICLE_RC: documents.vehicle_rc,
-            VEHICLE_FITNESS_CERTIFICATE:
-                documents.vehicle_fitness_certificate,
-            TAXI_PERMIT: documents.taxi_permit
+            VEHICLE_FITNESS_CERTIFICATE: documents.vehicle_fitness_certificate,
+            TAXI_PERMIT: documents.taxi_permit,
         };
 
         const uploaded = [];
-        const missing = [];
+        const missing = [];        // required but missing
+        const optionalMissing = []; // optional but missing
 
-        Object.entries(documentMap).forEach(([type, file]) => {
-            if (
-                file !== null &&
-                file !== undefined &&
-                file !== ""
-            ) {
+        // Check required
+        requiredDocs.forEach((type) => {
+            const file = documentMap[type];
+            if (file !== null && file !== undefined && file !== "") {
                 uploaded.push(type);
             } else {
                 missing.push(type);
             }
         });
 
+        // Check optional — mark as uploaded if present, but don't fail if missing
+        optionalDocs.forEach((type) => {
+            const file = documentMap[type];
+            if (file !== null && file !== undefined && file !== "") {
+                uploaded.push(type);
+            } else {
+                optionalMissing.push(type);
+            }
+        });
 
         return res.status(200).json({
             success: true,
@@ -1300,32 +1315,29 @@ const getDriverDocumentStatus = async (req, res) => {
             // At least one document is uploaded
             documentsUploaded: uploaded.length > 0,
 
-            // Every required document is uploaded
+            // ✅ Every REQUIRED document is uploaded (EPIC card ignored)
             allDocumentsUploaded: missing.length === 0,
 
             message:
                 missing.length === 0
-                    ? "All documents uploaded."
+                    ? "All required documents uploaded."
                     : "Please upload the remaining documents.",
 
             data: {
                 driver_id: driverId,
                 uploaded,
                 missing,
-                verification_status:
-                    documents.verification_status
-            }
+                optional_missing: optionalMissing,
+                required: requiredDocs,
+                optional: optionalDocs,
+                verification_status: documents.verification_status,
+            },
         });
-
     } catch (error) {
-        console.error(
-            "❌ Get Driver Document Status Error:",
-            error
-        );
-
+        console.error("❌ Get Driver Document Status Error:", error);
         return res.status(500).json({
             success: false,
-            message: "Failed to check document status"
+            message: "Failed to check document status",
         });
     }
 };
@@ -1615,135 +1627,141 @@ const getBankDetails = async (req, res) => {
 // };
 
 const toggleOnline = async (req, res) => {
-  try {
-    const driver_id = req.user.userId;
-    const { is_online } = req.body;
+    try {
+        const driver_id = req.user.userId;
+        const { is_online } = req.body;
 
-    if (typeof is_online !== "boolean") {
-      return res.status(400).json({
-        success: false,
-        message: "is_online must be a boolean",
-      });
-    }
+        if (typeof is_online !== "boolean") {
+            return res.status(400).json({
+                success: false,
+                message: "is_online must be a boolean",
+            });
+        }
 
-    // ✅ Only block going ONLINE — allow going offline anytime
-    if (is_online === true) {
-      // 1. Documents
-      const docCheck = await pool.query(
-        `SELECT
+        // ✅ Only block going ONLINE — allow going offline anytime
+        if (is_online === true) {
+            // 1. Documents
+            const docCheck = await pool.query(
+                `SELECT
            driver_photo, driving_license, address_proof, pan_card,
            epic_card, vehicle_rc, vehicle_fitness_certificate, taxi_permit,
            verification_status
          FROM public.driver_documents
          WHERE driver_id = $1`,
-        [driver_id]
-      );
+                [driver_id]
+            );
 
-      const requiredDocs = [
-        "driver_photo", "driving_license", "address_proof", "pan_card",
-        "epic_card", "vehicle_rc", "vehicle_fitness_certificate", "taxi_permit",
-      ];
+            const requiredDocs = [
+                "driver_photo",
+                "driving_license",
+                "address_proof",
+                "pan_card",
+                // "epic_card",
+                "vehicle_rc",
+                "vehicle_fitness_certificate",
+                "taxi_permit",
+            ];
 
-      if (docCheck.rows.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Please upload all required documents before going online.",
-          field: "documents",
-        });
-      }
+            if (docCheck.rows.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Please upload all required documents before going online.",
+                    field: "documents",
+                });
+            }
 
-      const docs = docCheck.rows[0];
-      const missingDocs = requiredDocs.filter((k) => !docs[k]);
+            const docs = docCheck.rows[0];
+            const missingDocs = requiredDocs.filter((k) => !docs[k]);
 
-      if (missingDocs.length > 0) {
-        return res.status(400).json({
-          success: false,
-          message: `Please upload all documents. ${missingDocs.length} still missing.`,
-          field: "documents",
-        });
-      }
+            if (missingDocs.length > 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Please upload all documents. ${missingDocs.length} still missing.`,
+                    field: "documents",
+                });
+            }
 
-      if (docs.verification_status !== "APPROVED") {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Your documents are pending verification. You'll be notified once approved.",
-          field: "documents",
-          verification_status: docs.verification_status,
-        });
-      }
+            if (docs.verification_status !== "APPROVED") {
+                return res.status(400).json({
+                    success: false,
+                    message:
+                        "Your documents are pending verification. You'll be notified once approved.",
+                    field: "documents",
+                    verification_status: docs.verification_status,
+                });
+            }
 
-      // 2. Vehicle
-      const vehicleCheck = await pool.query(
-        `SELECT id, is_verified FROM public.vehicles
+            // 2. Vehicle
+            const vehicleCheck = await pool.query(
+                `SELECT id, is_verified FROM public.vehicles
          WHERE driver_id = $1 LIMIT 1`,
-        [driver_id]
-      );
+                [driver_id]
+            );
 
-      if (vehicleCheck.rows.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Please add your vehicle details before going online.",
-          field: "vehicle",
-        });
-      }
+            if (vehicleCheck.rows.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Please add your vehicle details before going online.",
+                    field: "vehicle",
+                });
+            }
 
-      if (vehicleCheck.rows[0].is_verified !== true) {
-        return res.status(400).json({
-          success: false,
-          message: "Your vehicle is pending verification.",
-          field: "vehicle",
-        });
-      }
+            if (vehicleCheck.rows[0].is_verified !== true) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Your vehicle is pending verification.",
+                    field: "vehicle",
+                });
+            }
 
-      // 3. Bank
-      const bankCheck = await pool.query(
-        `SELECT id, verification_status FROM public.driver_bank_details
+            // 3. Bank
+            const bankCheck = await pool.query(
+                `SELECT id, verification_status FROM public.driver_bank_details
          WHERE driver_id = $1 LIMIT 1`,
-        [driver_id]
-      );
+                [driver_id]
+            );
 
-      if (bankCheck.rows.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Please add your bank details before going online.",
-          field: "bank",
-        });
-      }
+            if (bankCheck.rows.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Please add your bank details before going online.",
+                    field: "bank",
+                });
+            }
 
-      if (bankCheck.rows[0].verification_status !== "APPROVED") {
-        return res.status(400).json({
-          success: false,
-          message: "Your bank details are pending verification.",
-          field: "bank",
-        });
-      }
-    }
+            if (bankCheck.rows[0].verification_status !== "APPROVED") {
+                return res.status(400).json({
+                    success: false,
+                    message: "Your bank details are pending verification.",
+                    field: "bank",
+                });
+            }
+        }
 
-    // ✅ All checks passed — proceed
-    const result = await pool.query(
-      `UPDATE public.drivers
+        // ✅ All checks passed — proceed
+        const result = await pool.query(
+            `UPDATE public.drivers
        SET is_online = $1,
            is_available = $1,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $2
        RETURNING id, is_online, is_available`,
-      [is_online, driver_id]
-    );
+            [is_online, driver_id]
+        );
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: "Driver not found" });
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, message: "Driver not found" });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: is_online ? "You are now online" : "You are now offline",
+            data: result.rows[0],
+        });
+    } catch (error) {
+        console.error("Toggle Online Error:", error);
+        return res.status(500).json({ success: false, message: error.message });
     }
-
-    return res.status(200).json({
-      success: true,
-      message: is_online ? "You are now online" : "You are now offline",
-      data: result.rows[0],
-    });
-  } catch (error) {
-    console.error("Toggle Online Error:", error);
-    return res.status(500).json({ success: false, message: error.message });
-  }
 };
 
 const getDriverStatus = async (req, res) => {
@@ -2283,114 +2301,114 @@ const createDriverNotification = async (client, driverId, { title, message, type
 };
 
 const getOnboardingStatus = async (req, res) => {
-  try {
-    const driver_id = req.user.userId;
+    try {
+        const driver_id = req.user.userId;
 
-    // ---------- DOCUMENTS ----------
-    const docRes = await pool.query(
-      `SELECT
+        // ---------- DOCUMENTS ----------
+        const docRes = await pool.query(
+            `SELECT
          driver_photo, driving_license, address_proof, pan_card, epic_card,
          vehicle_rc, vehicle_fitness_certificate, taxi_permit,
          verification_status
        FROM public.driver_documents
        WHERE driver_id = $1`,
-      [driver_id]
-    );
+            [driver_id]
+        );
 
-    const requiredDocs = [
-      "driver_photo",
-      "driving_license",
-      "address_proof",
-      "pan_card",
-      "epic_card",
-      "vehicle_rc",
-      "vehicle_fitness_certificate",
-      "taxi_permit",
-    ];
+        const requiredDocs = [
+            "driver_photo",
+            "driving_license",
+            "address_proof",
+            "pan_card",
+            //   "epic_card",
+            "vehicle_rc",
+            "vehicle_fitness_certificate",
+            "taxi_permit",
+        ];
 
-    let documentsSubmitted = false;
-    let documentsPending = [...requiredDocs];
-    let documentVerificationStatus = null;
+        let documentsSubmitted = false;
+        let documentsPending = [...requiredDocs];
+        let documentVerificationStatus = null;
 
-    if (docRes.rows.length > 0) {
-      const doc = docRes.rows[0];
-      documentVerificationStatus = doc.verification_status;
-      documentsPending = requiredDocs.filter((k) => !doc[k]);
-      documentsSubmitted = documentsPending.length === 0;
-    }
+        if (docRes.rows.length > 0) {
+            const doc = docRes.rows[0];
+            documentVerificationStatus = doc.verification_status;
+            documentsPending = requiredDocs.filter((k) => !doc[k]);
+            documentsSubmitted = documentsPending.length === 0;
+        }
 
-    const documentsApproved =
-      documentsSubmitted && documentVerificationStatus === "APPROVED";
+        const documentsApproved =
+            documentsSubmitted && documentVerificationStatus === "APPROVED";
 
-    // ---------- VEHICLE ----------
-    const vehicleRes = await pool.query(
-      `SELECT id, vehicle_type, vehicle_number, vehicle_model, vehicle_color,
+        // ---------- VEHICLE ----------
+        const vehicleRes = await pool.query(
+            `SELECT id, vehicle_type, vehicle_number, vehicle_model, vehicle_color,
               is_verified
        FROM public.vehicles
        WHERE driver_id = $1
        LIMIT 1`,
-      [driver_id]
-    );
+            [driver_id]
+        );
 
-    const vehicleSubmitted = vehicleRes.rows.length > 0;
-    const vehicle = vehicleSubmitted ? vehicleRes.rows[0] : null;
-    const vehicleApproved = vehicleSubmitted && vehicle?.is_verified === true;
+        const vehicleSubmitted = vehicleRes.rows.length > 0;
+        const vehicle = vehicleSubmitted ? vehicleRes.rows[0] : null;
+        const vehicleApproved = vehicleSubmitted && vehicle?.is_verified === true;
 
-    // ---------- BANK ----------
-    const bankRes = await pool.query(
-      `SELECT id, account_holder_name, bank_name, account_number, ifsc_code,
+        // ---------- BANK ----------
+        const bankRes = await pool.query(
+            `SELECT id, account_holder_name, bank_name, account_number, ifsc_code,
               verification_status
        FROM public.driver_bank_details
        WHERE driver_id = $1
        LIMIT 1`,
-      [driver_id]
-    );
+            [driver_id]
+        );
 
-    const bankSubmitted = bankRes.rows.length > 0;
-    const bank = bankSubmitted ? bankRes.rows[0] : null;
-    const bankApproved = bankSubmitted && bank?.verification_status === "APPROVED";
+        const bankSubmitted = bankRes.rows.length > 0;
+        const bank = bankSubmitted ? bankRes.rows[0] : null;
+        const bankApproved = bankSubmitted && bank?.verification_status === "APPROVED";
 
-    // ---------- OVERALL ----------
-    const canGoOnline = documentsApproved && vehicleApproved && bankApproved;
+        // ---------- OVERALL ----------
+        const canGoOnline = documentsApproved && vehicleApproved && bankApproved;
 
-    return res.status(200).json({
-      success: true,
-      data: {
-        can_go_online: canGoOnline,
+        return res.status(200).json({
+            success: true,
+            data: {
+                can_go_online: canGoOnline,
 
-        documents: {
-          submitted: documentsSubmitted,
-          approved: documentsApproved,
-          pending: documentsPending,
-          pending_count: documentsPending.length,
-          verification_status: documentVerificationStatus,
-        },
+                documents: {
+                    submitted: documentsSubmitted,
+                    approved: documentsApproved,
+                    pending: documentsPending,
+                    pending_count: documentsPending.length,
+                    verification_status: documentVerificationStatus,
+                },
 
-        vehicle: {
-          submitted: vehicleSubmitted,
-          approved: vehicleApproved,
-          data: vehicle,
-        },
+                vehicle: {
+                    submitted: vehicleSubmitted,
+                    approved: vehicleApproved,
+                    data: vehicle,
+                },
 
-        bank: {
-          submitted: bankSubmitted,
-          approved: bankApproved,
-          data: bank,
-        },
-      },
-    });
-  } catch (error) {
-    console.error("Get Onboarding Status Error:", error);
-    return res.status(500).json({ success: false, message: error.message });
-  }
+                bank: {
+                    submitted: bankSubmitted,
+                    approved: bankApproved,
+                    data: bank,
+                },
+            },
+        });
+    } catch (error) {
+        console.error("Get Onboarding Status Error:", error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
 };
 
 const getPendingPayments = async (req, res) => {
-  try {
-    const driver_id = req.user.userId;
+    try {
+        const driver_id = req.user.userId;
 
-    const result = await pool.query(
-      `SELECT
+        const result = await pool.query(
+            `SELECT
          r.id AS ride_id,
          r.ride_unique_id,
          r.pickup_address,
@@ -2409,41 +2427,41 @@ const getPendingPayments = async (req, res) => {
          AND r.ride_status = 'COMPLETED'
          AND r.payment_status = 'PENDING'
        ORDER BY r.ride_completed_at DESC NULLS LAST, r.created_at DESC`,
-      [driver_id]
-    );
+            [driver_id]
+        );
 
-    const total = result.rows.reduce(
-      (sum, r) => sum + Number(r.final_amount || 0),
-      0
-    );
+        const total = result.rows.reduce(
+            (sum, r) => sum + Number(r.final_amount || 0),
+            0
+        );
 
-    return res.status(200).json({
-      success: true,
-      data: {
-        count: result.rows.length,
-        total_pending: Math.round(total * 100) / 100,
-        rides: result.rows.map((r) => ({
-          ride_id: r.ride_id,
-          ride_unique_id: r.ride_unique_id,
-          pickup_address: r.pickup_address,
-          drop_address: r.drop_address,
-          distance: r.distance,
-          final_amount: Number(r.final_amount || 0),
-          payment_method: r.payment_method,
-          payment_status: r.payment_status,
-          completed_at: r.ride_completed_at,
-          created_at: r.created_at,
-          customer: {
-            full_name: r.customer_name,
-            phone: r.customer_phone,
-          },
-        })),
-      },
-    });
-  } catch (error) {
-    console.error("Get Pending Payments Error:", error);
-    return res.status(500).json({ success: false, message: error.message });
-  }
+        return res.status(200).json({
+            success: true,
+            data: {
+                count: result.rows.length,
+                total_pending: Math.round(total * 100) / 100,
+                rides: result.rows.map((r) => ({
+                    ride_id: r.ride_id,
+                    ride_unique_id: r.ride_unique_id,
+                    pickup_address: r.pickup_address,
+                    drop_address: r.drop_address,
+                    distance: r.distance,
+                    final_amount: Number(r.final_amount || 0),
+                    payment_method: r.payment_method,
+                    payment_status: r.payment_status,
+                    completed_at: r.ride_completed_at,
+                    created_at: r.created_at,
+                    customer: {
+                        full_name: r.customer_name,
+                        phone: r.customer_phone,
+                    },
+                })),
+            },
+        });
+    } catch (error) {
+        console.error("Get Pending Payments Error:", error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
 };
 
 module.exports = {

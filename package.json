@@ -31,6 +31,7 @@
     "morgan": "^1.10.1",
     "multer": "^2.3.0",
     "pg": "^8.21.0",
+    "razorpay": "^2.9.8",
     "rotating-file-stream": "^3.2.9",
     "socket.io": "^4.8.3"
   },

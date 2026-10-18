@@ -9,6 +9,7 @@ const cookieParser = require('cookie-parser')
 const fs = require("fs");
 const path = require("path");
 const pool = require("./middleware/db.connection")
+const razorpayWebhook = require("./controllers/UserAuthentication/Payment.Controller.js")
 require("dotenv").config();
 // const errorHandler = require("./middleware/ErrorHandler.js");
 // const sqlInjectionProtection = require("./middleware/sqlInjectionProtection.js");
@@ -96,6 +97,13 @@ app.use(
     })
 );
 
+// app.post(
+//     "/api/webhooks/razorpay",
+//     express.raw({ type: "application/json" }),
+//     razorpayWebhook
+// );
+
+
 // 2. Everything else (APIs) = no cache
 app.use((req, res, next) => {
     res.setHeader("Cache-Control", "no-store");
@@ -114,6 +122,8 @@ app.use(morgan(logFormat, { stream: accessLogStream }));
 const Userrouter = require('./routes/UserRoutes/User.routes.js')
 const Driverrouter = require('./routes/DriverRoutes/Driver.routes.js')
 const Commonrouter = require('./routes/UserDriverRoutes/User_Driver.routes.js')
+const Paymentrouter = require('./routes/UserRoutes/Payment.routes.js')
+
 // User Routes
 app.use(`${process.env.BASE_NAVIGATE}user`, Userrouter)
 
@@ -123,6 +133,8 @@ app.use(`${process.env.BASE_NAVIGATE}driver`, Driverrouter)
 
 // Common Routes
 app.use(`${process.env.BASE_NAVIGATE}user_driver`, Commonrouter)
+
+app.use(`${process.env.BASE_NAVIGATE}user/payment`, Paymentrouter)
 
 
 app.get('/', (req, res) => {

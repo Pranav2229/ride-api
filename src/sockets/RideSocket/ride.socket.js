@@ -160,6 +160,38 @@ const emitRidePaid = (recipientId, data, recipientType = "USER") => {
     }
 };
 
+/**
+ * Notify BOTH the customer and the driver that a ride has been paid.
+ * Used when a Razorpay payment is verified OR when the driver
+ * confirms cash collection.
+ */
+const emitPaymentCompleted = (userId, driverId, rideId, amount, method) => {
+  const io = getIO();
+
+  const payload = {
+    rideId,
+    amount,
+    method,
+    paidAt: new Date().toISOString(),
+  };
+
+  // Customer
+  const userSocket = onlineUsers.get(Number(userId));
+  if (userSocket) {
+    io.to(userSocket).emit("payment_completed", payload);
+    console.log(`✅ payment_completed → user ${userId}`);
+  }
+
+  // Driver
+  if (driverId) {
+    const driverSocket = onlineDrivers.get(Number(driverId));
+    if (driverSocket) {
+      io.to(driverSocket).emit("payment_completed", payload);
+      console.log(`✅ payment_completed → driver ${driverId}`);
+    }
+  }
+};
+
 module.exports = {
     emitRideToDrivers,
     emitRideAccepted,
@@ -168,7 +200,8 @@ module.exports = {
     emitDriverLocation,
     emitRideCompleted,
     emitRideCancelled,
-    emitRidePaid
+    emitRidePaid,
+    emitPaymentCompleted
 };
 
 // const { getIO } = require("../index");

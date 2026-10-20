@@ -166,29 +166,49 @@ const emitRidePaid = (recipientId, data, recipientType = "USER") => {
  * confirms cash collection.
  */
 const emitPaymentCompleted = (userId, driverId, rideId, amount, method) => {
-  const io = getIO();
-
-  const payload = {
-    rideId,
-    amount,
-    method,
-    paidAt: new Date().toISOString(),
-  };
-
-  // Customer
-  const userSocket = onlineUsers.get(Number(userId));
-  if (userSocket) {
-    io.to(userSocket).emit("payment_completed", payload);
-    console.log(`✅ payment_completed → user ${userId}`);
-  }
-
-  // Driver
-  if (driverId) {
-    const driverSocket = onlineDrivers.get(Number(driverId));
-    if (driverSocket) {
-      io.to(driverSocket).emit("payment_completed", payload);
-      console.log(`✅ payment_completed → driver ${driverId}`);
+  try {
+    const io = getIO();
+    if (!io) {
+      console.log("⚠️ payment_completed SKIPPED — io is null");
+      return;
     }
+
+    const payload = {
+      rideId,
+      ride_id: rideId,          // ✅ both naming conventions
+      amount,
+      method,
+      paidAt: new Date().toISOString(),
+    };
+
+    console.log("📤 emitPaymentCompleted payload:", payload);
+    console.log("📤 onlineUsers size:", onlineUsers.size);
+    console.log("📤 onlineDrivers size:", onlineDrivers.size);
+
+    // ─── Customer ───
+    const userSocket = onlineUsers.get(Number(userId));
+    if (userSocket) {
+      io.to(userSocket).emit("payment_completed", payload);
+      console.log(`✅ payment_completed → user ${userId} (socket ${userSocket})`);
+    } else {
+      console.log(`⚠️ SKIPPED user ${userId} — not in onlineUsers`);
+    }
+
+    // ─── Driver ───
+    if (driverId) {
+      const driverSocket = onlineDrivers.get(Number(driverId));
+      if (driverSocket) {
+        io.to(driverSocket).emit("payment_completed", payload);
+        console.log(`✅ payment_completed → driver ${driverId} (socket ${driverSocket})`);
+      } else {
+        console.log(`⚠️ SKIPPED driver ${driverId} — not in onlineDrivers`);
+        console.log(`   onlineDrivers keys: [${[...onlineDrivers.keys()].join(", ")}]`);
+      }
+    } else {
+      console.log("⚠️ SKIPPED driver — driverId is null");
+    }
+  } catch (e) {
+    console.error("❌ emitPaymentCompleted error:", e);
   }
 };
 

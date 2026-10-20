@@ -825,9 +825,75 @@ const startRide = async (req, res) => {
     }
 };
 
+// const completeRide = async (req, res) => {
+//     try {
+
+//         const errors = validationResult(req);
+
+//         if (!errors.isEmpty()) {
+//             return res.status(400).json({
+//                 success: false,
+//                 errors: errors.array()
+//             });
+//         }
+
+//         const { ride_id } = req.body;
+
+//         const result = await pool.query(
+//             `
+//       CALL public.complete_ride(
+//         $1,
+//         NULL
+//       )
+//       `,
+//             [ride_id]
+//         );
+
+//         if (
+//             !result.rows ||
+//             result.rows.length === 0
+//         ) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: "Unable to complete ride"
+//             });
+//         }
+
+//         const response = result.rows[0].p_response;
+
+//         if (!response.success) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: response.message
+//             });
+//         }
+
+//         emitRideCompleted(
+//             response.data.user_id,
+//             response.data
+//         );
+
+//         return res.status(200).json({
+//             success: true,
+//             message: response.message,
+//             data: response.data
+//         });
+
+
+//     } catch (error) {
+
+//         console.error(error);
+
+//         return res.status(500).json({
+//             success: false,
+//             message: error.message
+//         });
+
+//     }
+// };
+
 const completeRide = async (req, res) => {
     try {
-
         const errors = validationResult(req);
 
         if (!errors.isEmpty()) {
@@ -839,20 +905,15 @@ const completeRide = async (req, res) => {
 
         const { ride_id } = req.body;
 
+        // =====================================================
+        // 1. Call SP to complete the ride
+        // =====================================================
         const result = await pool.query(
-            `
-      CALL public.complete_ride(
-        $1,
-        NULL
-      )
-      `,
+            `CALL public.complete_ride($1, NULL)`,
             [ride_id]
         );
 
-        if (
-            !result.rows ||
-            result.rows.length === 0
-        ) {
+        if (!result.rows || result.rows.length === 0) {
             return res.status(400).json({
                 success: false,
                 message: "Unable to complete ride"
@@ -868,27 +929,114 @@ const completeRide = async (req, res) => {
             });
         }
 
+        // =====================================================
+        // 2. ✅ If Wallet ride → debit now (inside this handler)
+        // =====================================================
+        const rideRes = await pool.query(
+            `SELECT id, user_id, driver_id, final_amount, payment_method, payment_status
+             FROM public.rides
+             WHERE id = $1`,
+            [ride_id]
+        );
+
+        const ride = rideRes.rows[0];
+
+        if (ride && ride.payment_method === "Wallet" && ride.payment_status !== "PAID") {
+            const client = await pool.connect();
+            try {
+                await client.query("BEGIN");
+
+                // Lock user row
+                const userRes = await client.query(
+                    `SELECT wallet_balance FROM public.users WHERE id = $1 FOR UPDATE`,
+                    [ride.user_id]
+                );
+
+                const balance = Number(userRes.rows[0]?.wallet_balance || 0);
+                const fare = Number(ride.final_amount);
+
+                if (balance >= fare) {
+                    const newBalance = balance - fare;
+
+                    // Debit transaction
+                    await client.query(
+                        `INSERT INTO public.wallet_transactions
+                           (user_id, type, amount, description, created_at)
+                         VALUES ($1, 'DEBIT', $2, $3, CURRENT_TIMESTAMP)`,
+                        [ride.user_id, fare, `Ride #${ride.id} payment`]
+                    );
+
+                    // Update balance
+                    await client.query(
+                        `UPDATE public.users SET wallet_balance = $1 WHERE id = $2`,
+                        [newBalance, ride.user_id]
+                    );
+
+                    // Mark ride paid
+                    await client.query(
+                        `UPDATE public.rides
+                         SET payment_status = 'PAID', updated_at = NOW()
+                         WHERE id = $1`,
+                        [ride.id]
+                    );
+
+                    // Log in payments table
+                    await client.query(
+                        `INSERT INTO public.payments
+                           (ride_id, user_id, amount, currency,
+                            payment_gateway, payment_method,
+                            payment_status, paid_at, updated_at)
+                         VALUES ($1, $2, $3, 'INR', NULL, 'WALLET', 'CAPTURED', NOW(), NOW())`,
+                        [ride.id, ride.user_id, fare]
+                    );
+
+                    ride.payment_status = "PAID";
+                    console.log(`✅ Wallet debited ₹${fare} for ride ${ride.id}`);
+                } else {
+                    // Insufficient — leave PENDING
+                    console.log(
+                        `⚠️ Wallet insufficient for ride ${ride.id}: need ₹${fare}, have ₹${balance}`
+                    );
+                }
+
+                await client.query("COMMIT");
+            } catch (walletErr) {
+                await client.query("ROLLBACK").catch(() => {});
+                console.error("Wallet debit error:", walletErr);
+                // Don't fail the whole request — ride is completed
+            } finally {
+                client.release();
+            }
+        }
+
+        // =====================================================
+        // 3. Emit ride_completed (as before) — with payment_status included
+        // =====================================================
         emitRideCompleted(
             response.data.user_id,
-            response.data
+            {
+                ...response.data,
+                payment_status: ride?.payment_status || response.data.payment_status || "PENDING",
+                payment_method: ride?.payment_method || response.data.payment_method,
+            }
         );
 
         return res.status(200).json({
             success: true,
             message: response.message,
-            data: response.data
+            data: {
+                ...response.data,
+                payment_status: ride?.payment_status || response.data.payment_status || "PENDING",
+                payment_method: ride?.payment_method || response.data.payment_method,
+            },
         });
 
-
     } catch (error) {
-
         console.error(error);
-
         return res.status(500).json({
             success: false,
             message: error.message
         });
-
     }
 };
 
@@ -2577,6 +2725,35 @@ const getPendingPayments = async (req, res) => {
     }
 };
 
+const getDriverRideById = async (req, res) => {
+  try {
+    const driverId = req.user.userId;   // or req.driver.id depending on your auth
+    const { id } = req.params;
+
+    if (!/^\d+$/.test(id)) {
+      return res.status(400).json({ success: false, message: "Invalid ride id" });
+    }
+
+    const { rows: [ride] } = await pool.query(
+      `SELECT id, user_id, driver_id, ride_status,
+              payment_method, payment_status, final_amount
+       FROM rides
+       WHERE id = $1 AND driver_id = $2
+       LIMIT 1`,
+      [id, driverId]
+    );
+
+    if (!ride) {
+      return res.status(404).json({ success: false, message: "Ride not found" });
+    }
+
+    return res.json({ success: true, data: ride });
+  } catch (e) {
+    console.error("getDriverRideById error:", e);
+    return res.status(500).json({ success: false, message: e.message });
+  }
+};
+
 module.exports = {
     loginDriver,
     registerDriver,
@@ -2607,5 +2784,6 @@ module.exports = {
     markAllDriverNotificationsRead,
     createDriverNotification,
     getOnboardingStatus,
-    getPendingPayments
+    getPendingPayments,
+    getDriverRideById
 };

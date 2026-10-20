@@ -34,7 +34,8 @@ const {
   markAllDriverNotificationsRead,
   createDriverNotification,
   getPendingPayments,
-  getOnboardingStatus
+  getOnboardingStatus,
+  getDriverRideById
 } = require('../../controllers/DriverAuthentication/Driver.Controller.js');
 const uploadDocument = require("../../middleware/uploadDocument.js")
 const authMiddleware = require("../../middleware/Auth.token.js");
@@ -429,5 +430,5 @@ router.get(
 );
 
 router.get("/pending_payments", authMiddleware, getPendingPayments);
-
+router.get("/rides/:id", authMiddleware, getDriverRideById);
 module.exports = router;

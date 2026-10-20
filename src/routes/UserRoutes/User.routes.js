@@ -32,7 +32,8 @@ const {
   getRouteController,
   estimateFares,
   rateRide,
-  getRideById
+  getRideById,
+  getUnpaidRides
 } = require('../../controllers/UserAuthentication/User.Controller.js');
 const authMiddleware = require("../../middleware/Auth.token.js");
 
@@ -259,6 +260,8 @@ router.post(
 router.get("/rides/active", authMiddleware, getActiveRide);
 router.get("/places/search", authMiddleware, searchPlacesController);
 router.get("/places/route", authMiddleware, getRouteController);
+router.get("/rides/unpaid", authMiddleware, getUnpaidRides);
+
 router.post(
   "/rides/estimate",
   authMiddleware,

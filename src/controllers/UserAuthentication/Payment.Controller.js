@@ -82,7 +82,7 @@ const verifyPayment = async (req, res) => {
             return res.status(400).json({ success: false, message: "Missing payment fields" });
         }
 
-        // 1. Verify HMAC
+        // 1. Verify HMAC signature
         const expected = crypto
             .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
             .update(`${razorpay_order_id}|${razorpay_payment_id}`)
@@ -103,6 +103,8 @@ const verifyPayment = async (req, res) => {
 
         // 2. Atomic update
         const client = await pool.connect();
+        let ride = null;                // ✅ hoisted so it's visible after the try
+
         try {
             await client.query("BEGIN");
 
@@ -122,32 +124,41 @@ const verifyPayment = async (req, res) => {
 
             if (!payment) {
                 await client.query("ROLLBACK");
-                return res.status(400).json({ success: false, message: "Payment already processed or not found" });
+                return res.status(400).json({
+                    success: false,
+                    message: "Payment already processed or not found",
+                });
             }
 
-            await client.query(
+            // ✅ RETURNING the ride fields we need for the socket emit
+            const { rows: [r] } = await client.query(
                 `UPDATE rides
          SET payment_status='PAID', payment_id=$1, updated_at=NOW()
-         WHERE id=$2`,
+         WHERE id=$2
+         RETURNING id, user_id, driver_id, final_amount, payment_method`,
                 [payment.id, payment.ride_id]
             );
 
+            ride = r;
+
             await client.query("COMMIT");
         } catch (txErr) {
-            await pool.query("ROLLBACK").catch(() => { });
+            await client.query("ROLLBACK").catch(() => { });
             throw txErr;
         } finally {
             client.release();
         }
 
-        // ✅ Notify both sides
-        emitPaymentCompleted(
-            ride.user_id,
-            ride.driver_id,
-            ride.id,
-            Number(ride.final_amount),
-            ride.payment_method
-        );
+        // 3. Notify both sides
+        if (ride) {
+            emitPaymentCompleted(
+                ride.user_id,
+                ride.driver_id,
+                ride.id,
+                Number(ride.final_amount),
+                ride.payment_method
+            );
+        }
 
         return res.json({ success: true, message: "Payment verified" });
     } catch (e) {
@@ -248,12 +259,143 @@ const getPaymentHistory = async (req, res) => {
     return res.json({ success: true, data: rows });
 };
 
+const createWalletTopupOrder = async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        const { amount } = req.body;
 
+        const numericAmount = Number(amount);
+        if (!Number.isFinite(numericAmount) || numericAmount <= 0 || numericAmount > 100000) {
+            return res.status(400).json({
+                success: false,
+                message: "Amount must be between 1 and 100000",
+            });
+        }
+
+        const amountPaise = Math.round(numericAmount * 100);
+
+        const order = await razorpay.orders.create({
+            amount: amountPaise,
+            currency: "INR",
+            receipt: `wallet_${userId}_${Date.now()}`,
+            notes: { user_id: userId, type: "wallet_topup" },
+        });
+
+        // Track the top-up as a payments row (ride_id = NULL)
+        await pool.query(
+            `INSERT INTO payments
+         (ride_id, user_id, amount, currency,
+          payment_gateway, payment_method,
+          gateway_order_id, payment_status, updated_at)
+       VALUES (NULL, $1, $2, 'INR',
+               'RAZORPAY', 'WALLET_TOPUP',
+               $3, 'PENDING', NOW())`,
+            [userId, numericAmount, order.id]
+        );
+
+        return res.json({
+            success: true,
+            data: {
+                razorpay_order_id: order.id,
+                razorpay_key_id: process.env.RAZORPAY_KEY_ID,
+                amount: amountPaise,
+                currency: "INR",
+            },
+        });
+    } catch (e) {
+        console.error("createWalletTopupOrder error:", e);
+        return res.status(500).json({ success: false, message: e.message });
+    }
+};
+
+const verifyWalletTopup = async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const userId = req.user.userId;
+        const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+
+        if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+            return res.status(400).json({ success: false, message: "Missing fields" });
+        }
+
+        // 1. Signature check
+        const expected = crypto
+            .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+            .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+            .digest("hex");
+
+        if (expected !== razorpay_signature) {
+            return res.status(400).json({ success: false, message: "Invalid signature" });
+        }
+
+        await client.query("BEGIN");
+
+        // 2. Lock payments row
+        const { rows: [payment] } = await client.query(
+            `UPDATE payments
+       SET payment_status='CAPTURED',
+           transaction_id=$1,
+           gateway_payment_id=$1,
+           gateway_signature=$2,
+           paid_at=NOW(),
+           updated_at=NOW()
+       WHERE gateway_order_id=$3
+         AND payment_method='WALLET_TOPUP'
+         AND payment_status='PENDING'
+       RETURNING id, amount`,
+            [razorpay_payment_id, razorpay_signature, razorpay_order_id]
+        );
+
+        if (!payment) {
+            await client.query("ROLLBACK");
+            return res.status(400).json({ success: false, message: "Already processed" });
+        }
+
+        const amount = Number(payment.amount);
+
+        // 3. Lock user, update balance
+        const { rows: [user] } = await client.query(
+            `SELECT wallet_balance FROM public.users WHERE id = $1 FOR UPDATE`,
+            [userId]
+        );
+
+        const currentBalance = Number(user?.wallet_balance || 0);
+        const newBalance = currentBalance + amount;
+
+        await client.query(
+            `UPDATE public.users SET wallet_balance = $1 WHERE id = $2`,
+            [newBalance, userId]
+        );
+
+        // 4. Insert wallet_transactions row
+        await client.query(
+            `INSERT INTO public.wallet_transactions
+         (user_id, type, amount, description, created_at)
+       VALUES ($1, 'CREDIT', $2, $3, CURRENT_TIMESTAMP)`,
+            [userId, amount, `Wallet top-up via Razorpay #${razorpay_payment_id}`]
+        );
+
+        await client.query("COMMIT");
+
+        return res.json({
+            success: true,
+            data: { balance: newBalance, amount },
+        });
+    } catch (e) {
+        await client.query("ROLLBACK").catch(() => { });
+        console.error("verifyWalletTopup error:", e);
+        return res.status(500).json({ success: false, message: e.message });
+    } finally {
+        client.release();
+    }
+};
 
 module.exports = {
     createPaymentOrder,
     verifyPayment,
     markPaymentFailed,
     razorpayWebhook,
-    getPaymentHistory
+    getPaymentHistory,
+    createWalletTopupOrder,
+    verifyWalletTopup
 };

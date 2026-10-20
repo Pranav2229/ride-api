@@ -495,6 +495,35 @@ const createRide = async (req, res) => {
       payment_method
     } = req.body;
 
+    // ✅ NEW: Validate wallet balance BEFORE creating the ride
+    if (payment_method === "Wallet") {
+      const walletRes = await pool.query(
+        `SELECT wallet_balance FROM public.users WHERE id = $1`,
+        [user_id]
+      );
+
+      if (walletRes.rows.length === 0) {
+        return res.status(404).json({ success: false, message: "User not found" });
+      }
+
+      const balance = Number(walletRes.rows[0].wallet_balance || 0);
+      const fare = Number(final_amount);
+
+      if (!Number.isFinite(fare) || fare <= 0) {
+        return res.status(400).json({ success: false, message: "Invalid fare amount" });
+      }
+
+      if (balance < fare) {
+        return res.status(400).json({
+          success: false,
+          message: `Insufficient wallet balance. Need ₹${fare.toFixed(2)}, have ₹${balance.toFixed(2)}. Please add money to your wallet.`,
+          field: "wallet_balance",
+          required: fare,
+          available: balance,
+        });
+      }
+    }
+
     // ✅ Generate ride OTP (4-digit)
     const ride_otp = generateOTP(4);
 
@@ -849,10 +878,7 @@ const getActiveRide = async (req, res) => {
   }
 };
 
-// ---------------------------------------------------------
-// GET /api/general/user/wallet
-// Returns balance + recent transactions
-// ---------------------------------------------------------
+
 const getWallet = async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -904,11 +930,6 @@ const getWallet = async (req, res) => {
   }
 };
 
-// ---------------------------------------------------------
-// POST /api/general/user/wallet/add_money
-// Adds money to wallet (mock recharge for now)
-// Body: { amount }
-// ---------------------------------------------------------
 const addMoneyToWallet = async (req, res) => {
   const client = await pool.connect();
 
@@ -993,10 +1014,7 @@ const addMoneyToWallet = async (req, res) => {
   }
 };
 
-// ---------------------------------------------------------
-// Internal helper — call this from ride completion to debit wallet
-// Not exposed as a route; used by other controllers
-// ---------------------------------------------------------
+
 const debitWallet = async (client, userId, amount, description) => {
   const userRes = await client.query(
     `SELECT wallet_balance FROM public.users WHERE id = $1 FOR UPDATE`,
@@ -1014,7 +1032,7 @@ const debitWallet = async (client, userId, amount, description) => {
   await client.query(
     `INSERT INTO public.wallet_transactions
        (user_id, type, amount, description, created_at)
-     VALUES ($1, 'debit', $2, $3, CURRENT_TIMESTAMP)`,
+     VALUES ($1, 'DEBIT', $2, $3, CURRENT_TIMESTAMP)`,
     [userId, amount, description]
   );
 
@@ -1026,11 +1044,6 @@ const debitWallet = async (client, userId, amount, description) => {
   return newBalance;
 };
 
-// ---------------------------------------------------------
-// GET /api/general/user/notifications
-// Returns list of user's notifications (newest first)
-// Query params: ?limit=50&offset=0&unreadOnly=true
-// ---------------------------------------------------------
 const getNotifications = async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -1076,10 +1089,6 @@ const getNotifications = async (req, res) => {
   }
 };
 
-// ---------------------------------------------------------
-// POST /api/general/user/notifications/:id/read
-// Mark one notification as read
-// ---------------------------------------------------------
 const markAsRead = async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -1114,10 +1123,6 @@ const markAsRead = async (req, res) => {
   }
 };
 
-// ---------------------------------------------------------
-// POST /api/general/user/notifications/read_all
-// Mark all as read
-// ---------------------------------------------------------
 const markAllAsRead = async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -1888,7 +1893,7 @@ const completeReferral = async (client, refereeId) => {
 
   await client.query(
     `INSERT INTO public.wallet_transactions (user_id, type, amount, description)
-     VALUES ($1, 'credit', $2, $3)`,
+     VALUES ($1, 'CREDIT', $2, $3)`,
     [referrer_id, reward_amount, "Referral bonus"]
   );
 
@@ -2166,6 +2171,33 @@ const rateRide = async (req, res) => {
   }
 };
 
+const getUnpaidRides = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    const { rows } = await pool.query(
+      `SELECT id, ride_unique_id, ride_status, payment_status, payment_method,
+              final_amount, pickup_address, drop_address, ride_completed_at
+       FROM rides
+       WHERE user_id = $1
+         AND ride_status = 'COMPLETED'
+         AND payment_status <> 'PAID'
+         AND payment_method <> 'Cash'
+       ORDER BY ride_completed_at DESC NULLS LAST
+       LIMIT 1`,
+      [userId]
+    );
+
+    return res.json({
+      success: true,
+      data: rows.length > 0 ? rows[0] : null,
+    });
+  } catch (e) {
+    console.error("getUnpaidRides error:", e);
+    return res.status(500).json({ success: false, message: e.message });
+  }
+};
+
 module.exports = {
   searchPlacesController,
   getRouteController,
@@ -2200,5 +2232,6 @@ module.exports = {
   completeReferral,
   estimateFares,
   rateRide,
-  getRideById
+  getRideById,
+  getUnpaidRides
 };

@@ -123,6 +123,8 @@ const Userrouter = require('./routes/UserRoutes/User.routes.js')
 const Driverrouter = require('./routes/DriverRoutes/Driver.routes.js')
 const Commonrouter = require('./routes/UserDriverRoutes/User_Driver.routes.js')
 const Paymentrouter = require('./routes/UserRoutes/Payment.routes.js')
+const Adminrouter = require('./routes/AdminRoutes/Admin.routes.js')
+
 
 // User Routes
 app.use(`${process.env.BASE_NAVIGATE}user`, Userrouter)
@@ -135,6 +137,9 @@ app.use(`${process.env.BASE_NAVIGATE}driver`, Driverrouter)
 app.use(`${process.env.BASE_NAVIGATE}user_driver`, Commonrouter)
 
 app.use(`${process.env.BASE_NAVIGATE}user/payment`, Paymentrouter)
+
+app.use(`${process.env.BASE_NAVIGATE}admin`, Adminrouter)
+
 
 
 app.get('/', (req, res) => {

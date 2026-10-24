@@ -17,7 +17,7 @@ const app = express();
 
 // Middlewares
 app.use(cors({
-    origin: "", // Allow multiple domains
+    origin: "*", // Allow multiple domains
     credentials: true,
     methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
     allowedHeaders: "Content-Type, Authorization"

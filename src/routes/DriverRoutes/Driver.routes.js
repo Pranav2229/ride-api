@@ -142,18 +142,51 @@ router.put(
   updateDriverProfile
 );
 
+// router.post(
+//   "/login_driver",
+//   [
+//     body("email")
+//       .notEmpty()
+//       .withMessage("Email is required")
+//       .isEmail()
+//       .withMessage("Invalid email"),
+
+//     body("password")
+//       .notEmpty()
+//       .withMessage("Password is required")
+//   ],
+//   loginDriver
+// );
+
 router.post(
   "/login_driver",
   [
-    body("email")
-      .notEmpty()
-      .withMessage("Email is required")
-      .isEmail()
-      .withMessage("Invalid email"),
+    body().custom((value, { req }) => {
+      const id = String(
+        req.body.identifier ||
+        req.body.email ||
+        req.body.phone ||
+        ""
+      ).trim();
+
+      if (!id) throw new Error("Email or phone is required");
+
+      const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(id);
+      const isPhone = /^[0-9]{10,15}$/.test(id.replace(/\s+/g, ""));
+
+      if (!isEmail && !isPhone) {
+        throw new Error("Enter a valid email or 10-15 digit phone number");
+      }
+      return true;
+    }),
 
     body("password")
       .notEmpty()
       .withMessage("Password is required")
+      .isString()
+      .trim()
+      .isLength({ min: 6 })
+      .withMessage("Password must be at least 6 characters"),
   ],
   loginDriver
 );

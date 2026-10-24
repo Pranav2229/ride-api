@@ -1,7 +1,7 @@
 // controllers/AdminAuth/adminAuth.controller.js
-const pool   = require("../../middleware/db.connection.js");
+const pool = require("../../middleware/db.connection.js");
 const bcrypt = require("bcryptjs");
-const jwt    = require("jsonwebtoken");
+const jwt = require("jsonwebtoken");
 const { validationResult } = require("express-validator");
 
 const adminLogin = async (req, res) => {
@@ -11,7 +11,9 @@ const adminLogin = async (req, res) => {
       return res.status(400).json({ success: false, errors: errors.array() });
     }
 
-    const { email, password } = req.body;
+    // ✅ Normalize
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const password = String(req.body.password || "");
 
     // 1. Call SP to fetch credentials
     const result = await pool.query(
@@ -121,7 +123,7 @@ const getDashboardKpis = async (req, res) => {
       success: true,
       data: {
         today: response.today,
-        live:  response.live,
+        live: response.live,
       },
     });
   } catch (error) {
@@ -244,20 +246,20 @@ const getDashboardOverview = async (req, res) => {
         pool.query(`CALL public.admin_recent_cancellations(NULL)`),
       ]);
 
-    const kpis   = kpisResult.rows[0]?.p_response;
+    const kpis = kpisResult.rows[0]?.p_response;
     const alerts = alertsResult.rows[0]?.p_response;
     const charts = chartsResult.rows[0]?.p_response;
-    const live   = liveResult.rows[0]?.p_response;
-    const cancels= cancelsResult.rows[0]?.p_response;
+    const live = liveResult.rows[0]?.p_response;
+    const cancels = cancelsResult.rows[0]?.p_response;
 
     return res.status(200).json({
       success: true,
       data: {
-        kpis:          kpis?.success  ? { today: kpis.today, live: kpis.live } : null,
-        alerts:        alerts?.success ? alerts.data : null,
-        charts:        charts?.success ? charts.data : null,
-        live_rides:    live?.success   ? live.data   : [],
-        cancellations: cancels?.success? cancels.data: [],
+        kpis: kpis?.success ? { today: kpis.today, live: kpis.live } : null,
+        alerts: alerts?.success ? alerts.data : null,
+        charts: charts?.success ? charts.data : null,
+        live_rides: live?.success ? live.data : [],
+        cancellations: cancels?.success ? cancels.data : [],
       },
     });
   } catch (error) {

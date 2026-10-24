@@ -37,19 +37,50 @@ const {
 } = require('../../controllers/UserAuthentication/User.Controller.js');
 const authMiddleware = require("../../middleware/Auth.token.js");
 
-// router.post('/register', registerUser);
+// router.post("/login_user", [
+//   body("email")
+//     .notEmpty()
+//     .withMessage("Email is required")
+//     .isEmail()
+//     .withMessage("Invalid email"),
 
-router.post("/login_user", [
-  body("email")
-    .notEmpty()
-    .withMessage("Email is required")
-    .isEmail()
-    .withMessage("Invalid email"),
+//   body("password")
+//     .notEmpty()
+//     .withMessage("Password is required")
+// ],
+//   loginUser
+// );
 
-  body("password")
-    .notEmpty()
-    .withMessage("Password is required")
-],
+router.post(
+  "/login_user",
+  [
+    body().custom((value, { req }) => {
+      const id = String(
+        req.body.identifier ||
+        req.body.email ||
+        req.body.phone ||
+        ""
+      ).trim();
+
+      if (!id) throw new Error("Email or phone is required");
+
+      const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(id);
+      const isPhone = /^[0-9]{10,15}$/.test(id.replace(/\s+/g, ""));
+
+      if (!isEmail && !isPhone) {
+        throw new Error("Enter a valid email or 10-15 digit phone number");
+      }
+      return true;
+    }),
+
+    body("password")
+      .notEmpty()
+      .withMessage("Password is required")
+      .isString()
+      .trim()
+      .isLength({ min: 6 })
+      .withMessage("Password must be at least 6 characters"),
+  ],
   loginUser
 );
 

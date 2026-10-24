@@ -14,124 +14,8 @@ const {
 } = require("../../sockets/RideSocket/ride.socket.js");
 const { generateOTP } = require("../../middleware/otp.js")
 
-
-// const loginDriver = async (req, res) => {
-//     try {
-//         // Check Validation Errors
-//         const errors = validationResult(req);
-//         if (!errors.isEmpty()) {
-//             return res.status(400).json({
-//                 success: false,
-//                 errors: errors.array()
-//             });
-//         }
-//         const { email, password } = req.body;
-
-//         // Execute Stored Procedure
-//         const result = await pool.query(
-//             `CALL public.Login_Driver($1, $2, NULL)`,
-//             [email, password]
-//         );
-
-//         if (result.rows.length === 0) {
-//             return res.status(401).json({
-//                 success: false,
-//                 message: "Invalid email or password"
-//             });
-//         }
-//         const Driver = result.rows[0].p_response;
-
-//         if (!Driver.success) {
-//             return res.status(401).json({
-//                 success: false,
-//                 message: Driver.message
-//             });
-//         }
-//         // // Access Token
-//         const accessToken = jwt.sign(
-//             {
-//                 userId: Driver.data.driver_id,
-//                 fullName: Driver.data.full_name
-//             },
-//             process.env.JWT_ACCESS_SECRET,
-//             {
-//                 expiresIn: "15m"
-//             }
-//         );
-//         // // Refresh Token
-//         const refreshToken = jwt.sign(
-//             {
-//                 userId: Driver.data.driver_id
-//             },
-//             process.env.JWT_REFRESH_SECRET,
-//             {
-//                 expiresIn: "7d"
-//             }
-//         );
-
-//         if (Driver.data.verification_status == 'PENDING') {
-//             // Get Driver ID
-//             const driver_id = Driver.data.driver_id;
-
-
-//             // Generate OTP
-//             const otp = generateOTP();
-
-
-//             // OTP valid for 10 minutes
-//             const expiresAt = new Date(
-//                 Date.now() + 10 * 60 * 1000
-//             );
-
-
-//             // Store OTP
-//             await pool.query(
-//                 `
-//       INSERT INTO public.driver_otps
-//       (
-//         driver_id,
-//         otp,
-//         expires_at
-//       )
-//       VALUES
-//       (
-//         $1,
-//         $2,
-//         $3
-//       )
-//       `,
-//                 [
-//                     driver_id,
-//                     otp,
-//                     expiresAt
-//                 ]
-//             );
-//         }
-
-//         return res.status(200).json({
-//             success: true,
-//             message: "Login successful",
-//             data: {
-//                 role: "DRIVER",
-//                 Driver,
-//                 accessToken,
-//                 refreshToken
-//             }
-//         });
-
-//     } catch (error) {
-//         console.error(error);
-//         return res.status(500).json({
-//             success: false,
-//             message: "Internal Server Error"
-//         });
-
-//     }
-// };
-
 const loginDriver = async (req, res) => {
     try {
-        // Check Validation Errors
         const errors = validationResult(req);
         if (!errors.isEmpty()) {
             return res.status(400).json({
@@ -140,18 +24,38 @@ const loginDriver = async (req, res) => {
             });
         }
 
-        const { email, password } = req.body;
+        // ✅ Accept email, phone, or identifier (in that preference order)
+        const rawIdentifier =
+            req.body.identifier ||
+            req.body.email ||
+            req.body.phone ||
+            "";
+
+        const identifier = String(rawIdentifier).trim();
+        const password = String(req.body.password || "").trim();
+
+        if (!identifier || !password) {
+            return res.status(400).json({
+                success: false,
+                message: "Email/phone and password are required"
+            });
+        }
+
+        console.log("🔍 Driver login:", {
+            identifier,
+            type: identifier.includes("@") ? "email" : "phone"
+        });
 
         // Execute Stored Procedure
         const result = await pool.query(
             `CALL public.Login_Driver($1, $2, NULL)`,
-            [email, password]
+            [identifier, password]
         );
 
         if (result.rows.length === 0) {
             return res.status(401).json({
                 success: false,
-                message: "Invalid email or password"
+                message: "Invalid email/phone or password"
             });
         }
 
@@ -212,17 +116,12 @@ const loginDriver = async (req, res) => {
 
         if (Driver.data.verification_status === 'PENDING') {
             const driver_id = Driver.data.driver_id;
-
             const otp = generateOTP();
-
             const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
             await pool.query(
-                `
-        INSERT INTO public.driver_otps
-        (driver_id, otp, expires_at)
-        VALUES ($1, $2, $3)
-        `,
+                `INSERT INTO public.driver_otps (driver_id, otp, expires_at)
+         VALUES ($1, $2, $3)`,
                 [driver_id, otp, expiresAt]
             );
         }
@@ -247,14 +146,10 @@ const loginDriver = async (req, res) => {
     }
 };
 
-
-
-// const registerDriver = async (req, res) => {
+// const loginDriver = async (req, res) => {
 //     try {
-
 //         // Check Validation Errors
 //         const errors = validationResult(req);
-
 //         if (!errors.isEmpty()) {
 //             return res.status(400).json({
 //                 success: false,
@@ -262,82 +157,113 @@ const loginDriver = async (req, res) => {
 //             });
 //         }
 
-//         const {
-//             full_name,
-//             email,
-//             phone,
-//             password,
-//             profile_image,
-//             license_number,
-//             aadhaar_number,
-//             pan_number
-//         } = req.body;
+
+//         // ✅ Normalize
+//         const email = String(req.body.email || "").trim().toLowerCase();
+//         const password = String(req.body.password || "");
 
 //         // Execute Stored Procedure
 //         const result = await pool.query(
-//             `
-//             CALL public.register_driver(
-//                 $1,  -- full_name
-//                 $2,  -- email
-//                 $3,  -- phone
-//                 $4,  -- password
-//                 $5,  -- profile_image
-//                 $6,  -- license_number
-//                 $7,  -- aadhaar_number
-//                 $8,  -- pan_number
-//                 NULL
-//             )
-//             `,
-//             [
-//                 full_name,
-//                 email,
-//                 phone,
-//                 password,
-//                 profile_image || null,
-//                 license_number,
-//                 aadhaar_number || null,
-//                 pan_number || null
-//             ]
+//             `CALL public.Login_Driver($1, $2, NULL)`,
+//             [email, password]
 //         );
 
-//         // Check Procedure Response
-//         if (
-//             !result.rows ||
-//             result.rows.length === 0
-//         ) {
-//             return res.status(400).json({
+//         if (result.rows.length === 0) {
+//             return res.status(401).json({
 //                 success: false,
-//                 message: "Unable to register driver"
+//                 message: "Invalid email or password"
 //             });
 //         }
 
-//         const response =
-//             result.rows[0].p_response;
+//         const Driver = result.rows[0].p_response;
 
-//         // Procedure Failed
-//         if (!response.success) {
-//             return res.status(400).json({
+//         if (!Driver.success) {
+//             return res.status(401).json({
 //                 success: false,
-//                 message: response.message
+//                 message: Driver.message
 //             });
 //         }
 
-//         // Registration Successful
-//         return res.status(201).json({
+//         // ✅ Fetch driver's vehicle and attach vehicle_id
+//         try {
+//             const vehicleRes = await pool.query(
+//                 `SELECT id, vehicle_type, vehicle_number, vehicle_model, vehicle_color
+//          FROM public.vehicles
+//          WHERE driver_id = $1
+//          LIMIT 1`,
+//                 [Driver.data.driver_id]
+//             );
+
+//             if (vehicleRes.rows.length > 0) {
+//                 Driver.data.vehicle_id = vehicleRes.rows[0].id;
+//                 Driver.data.vehicle = {
+//                     id: vehicleRes.rows[0].id,
+//                     vehicle_type: vehicleRes.rows[0].vehicle_type,
+//                     vehicle_number: vehicleRes.rows[0].vehicle_number,
+//                     vehicle_model: vehicleRes.rows[0].vehicle_model,
+//                     vehicle_color: vehicleRes.rows[0].vehicle_color,
+//                 };
+//             } else {
+//                 Driver.data.vehicle_id = null;
+//                 Driver.data.vehicle = null;
+//             }
+//         } catch (vehicleErr) {
+//             console.log("Vehicle fetch during login failed:", vehicleErr.message);
+//             Driver.data.vehicle_id = null;
+//             Driver.data.vehicle = null;
+//         }
+
+//         // Access Token
+//         const accessToken = jwt.sign(
+//             {
+//                 userId: Driver.data.driver_id,
+//                 fullName: Driver.data.full_name
+//             },
+//             process.env.JWT_ACCESS_SECRET,
+//             { expiresIn: "15m" }
+//         );
+
+//         // Refresh Token
+//         const refreshToken = jwt.sign(
+//             { userId: Driver.data.driver_id },
+//             process.env.JWT_REFRESH_SECRET,
+//             { expiresIn: "7d" }
+//         );
+
+//         if (Driver.data.verification_status === 'PENDING') {
+//             const driver_id = Driver.data.driver_id;
+
+//             const otp = generateOTP();
+
+//             const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+//             await pool.query(
+//                 `
+//         INSERT INTO public.driver_otps
+//         (driver_id, otp, expires_at)
+//         VALUES ($1, $2, $3)
+//         `,
+//                 [driver_id, otp, expiresAt]
+//             );
+//         }
+
+//         return res.status(200).json({
 //             success: true,
-//             message: response.message,
-//             data: response.data
+//             message: "Login successful",
+//             data: {
+//                 role: "DRIVER",
+//                 Driver,
+//                 accessToken,
+//                 refreshToken
+//             }
 //         });
 
 //     } catch (error) {
-
-//         console.error("Register Driver Error:", error);
-
+//         console.error(error);
 //         return res.status(500).json({
 //             success: false,
 //             message: "Internal Server Error"
 //         });
-
 //     }
 // };
 
@@ -1001,7 +927,7 @@ const completeRide = async (req, res) => {
 
                 await client.query("COMMIT");
             } catch (walletErr) {
-                await client.query("ROLLBACK").catch(() => {});
+                await client.query("ROLLBACK").catch(() => { });
                 console.error("Wallet debit error:", walletErr);
                 // Don't fail the whole request — ride is completed
             } finally {
@@ -2726,32 +2652,32 @@ const getPendingPayments = async (req, res) => {
 };
 
 const getDriverRideById = async (req, res) => {
-  try {
-    const driverId = req.user.userId;   // or req.driver.id depending on your auth
-    const { id } = req.params;
+    try {
+        const driverId = req.user.userId;   // or req.driver.id depending on your auth
+        const { id } = req.params;
 
-    if (!/^\d+$/.test(id)) {
-      return res.status(400).json({ success: false, message: "Invalid ride id" });
-    }
+        if (!/^\d+$/.test(id)) {
+            return res.status(400).json({ success: false, message: "Invalid ride id" });
+        }
 
-    const { rows: [ride] } = await pool.query(
-      `SELECT id, user_id, driver_id, ride_status,
+        const { rows: [ride] } = await pool.query(
+            `SELECT id, user_id, driver_id, ride_status,
               payment_method, payment_status, final_amount
        FROM rides
        WHERE id = $1 AND driver_id = $2
        LIMIT 1`,
-      [id, driverId]
-    );
+            [id, driverId]
+        );
 
-    if (!ride) {
-      return res.status(404).json({ success: false, message: "Ride not found" });
+        if (!ride) {
+            return res.status(404).json({ success: false, message: "Ride not found" });
+        }
+
+        return res.json({ success: true, data: ride });
+    } catch (e) {
+        console.error("getDriverRideById error:", e);
+        return res.status(500).json({ success: false, message: e.message });
     }
-
-    return res.json({ success: true, data: ride });
-  } catch (e) {
-    console.error("getDriverRideById error:", e);
-    return res.status(500).json({ success: false, message: e.message });
-  }
 };
 
 module.exports = {

@@ -17,9 +17,121 @@ const { emitRideToDrivers } = require("../../sockets/RideSocket/ride.socket.js")
 const { searchPlaces } = require("../../middleware/nominatim.service.js");
 const { getRoute } = require("../../middleware/osrm.service.js");
 
+// const loginUser = async (req, res) => {
+//   try {
+//     // Check Validation Errors
+//     const errors = validationResult(req);
+//     if (!errors.isEmpty()) {
+//       return res.status(400).json({
+//         success: false,
+//         errors: errors.array()
+//       });
+//     }
+
+
+//     // ✅ Normalize before hitting SP
+//     const email = String(req.body.email || "").trim().toLowerCase();
+//     const password = String(req.body.password || "");    // ← password NO lowercase
+
+
+//     // Execute Stored Procedure
+//     const result = await pool.query(
+//       `CALL public.Login_User($1, $2, NULL)`,
+//       [email, password]
+//     );
+//     // console.log("result",result);
+
+//     if (result.rows.length === 0) {
+//       return res.status(401).json({
+//         success: false,
+//         message: "Invalid email or password"
+//       });
+//     }
+//     const user = result.rows[0].p_response;
+
+//     if (!user.success) {
+//       return res.status(401).json({
+//         success: false,
+//         message: user.message
+//       });
+//     }
+//     // // Access Token
+//     const accessToken = jwt.sign(
+//       {
+//         userId: user.data.user_id,
+//         fullname: user.data.full_name
+//       },
+//       process.env.JWT_ACCESS_SECRET,
+//       {
+//         expiresIn: "15m"
+//       }
+//     );
+//     // // Refresh Token
+//     const refreshToken = jwt.sign(
+//       {
+//         userId: user.data.user_id
+//       },
+//       process.env.JWT_REFRESH_SECRET,
+//       {
+//         expiresIn: "7d"
+//       }
+//     );
+
+//     if (!user.data.is_varified) {
+//       const otp = generateOTP();
+
+
+//       // OTP valid for 10 minutes
+//       const expiresAt = new Date(
+//         Date.now() + 10 * 60 * 1000
+//       );
+
+//       // Store OTP
+//       await pool.query(
+//         `
+//             INSERT INTO public.user_otps
+//             (
+//                 user_id,
+//                 otp,
+//                 expires_at
+//             )
+//             VALUES
+//             (
+//                 $1,
+//                 $2,
+//                 $3
+//             )
+//             `,
+//         [
+//           user.data.user_id,
+//           otp,
+//           expiresAt
+//         ]
+//       );
+//     }
+//     return res.status(200).json({
+//       success: true,
+//       message: "Login successful",
+//       role: "CUSTOMER",
+//       data: {
+//         user,
+//         accessToken,
+//         refreshToken
+//       }
+//     });
+
+//   } catch (error) {
+//     console.error(error);
+//     return res.status(500).json({
+//       success: false,
+//       message: "Internal Server Error"
+//     });
+
+//   }
+// };
+
 const loginUser = async (req, res) => {
   try {
-    // Check Validation Errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -27,21 +139,42 @@ const loginUser = async (req, res) => {
         errors: errors.array()
       });
     }
-    const { email, password } = req.body;
+
+    // ✅ Accept email, phone, or identifier (in that preference order)
+    const rawIdentifier =
+      req.body.identifier ||
+      req.body.email ||
+      req.body.phone ||
+      "";
+
+    const identifier = String(rawIdentifier).trim();
+    const password = String(req.body.password || "").trim();
+
+    if (!identifier || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Email/phone and password are required"
+      });
+    }
+
+    console.log("🔍 User login:", {
+      identifier,
+      type: identifier.includes("@") ? "email" : "phone"
+    });
 
     // Execute Stored Procedure
     const result = await pool.query(
       `CALL public.Login_User($1, $2, NULL)`,
-      [email, password]
+      [identifier, password]
     );
-    // console.log("result",result);
 
     if (result.rows.length === 0) {
       return res.status(401).json({
         success: false,
-        message: "Invalid email or password"
+        message: "Invalid email/phone or password"
       });
     }
+
     const user = result.rows[0].p_response;
 
     if (!user.success) {
@@ -50,60 +183,35 @@ const loginUser = async (req, res) => {
         message: user.message
       });
     }
-    // // Access Token
+
+    // Access Token
     const accessToken = jwt.sign(
       {
         userId: user.data.user_id,
         fullname: user.data.full_name
       },
       process.env.JWT_ACCESS_SECRET,
-      {
-        expiresIn: "15m"
-      }
+      { expiresIn: "15m" }
     );
-    // // Refresh Token
+
+    // Refresh Token
     const refreshToken = jwt.sign(
-      {
-        userId: user.data.user_id
-      },
+      { userId: user.data.user_id },
       process.env.JWT_REFRESH_SECRET,
-      {
-        expiresIn: "7d"
-      }
+      { expiresIn: "7d" }
     );
 
     if (!user.data.is_varified) {
       const otp = generateOTP();
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-
-      // OTP valid for 10 minutes
-      const expiresAt = new Date(
-        Date.now() + 10 * 60 * 1000
-      );
-
-      // Store OTP
       await pool.query(
-        `
-            INSERT INTO public.user_otps
-            (
-                user_id,
-                otp,
-                expires_at
-            )
-            VALUES
-            (
-                $1,
-                $2,
-                $3
-            )
-            `,
-        [
-          user.data.user_id,
-          otp,
-          expiresAt
-        ]
+        `INSERT INTO public.user_otps (user_id, otp, expires_at)
+         VALUES ($1, $2, $3)`,
+        [user.data.user_id, otp, expiresAt]
       );
     }
+
     return res.status(200).json({
       success: true,
       message: "Login successful",
@@ -121,7 +229,6 @@ const loginUser = async (req, res) => {
       success: false,
       message: "Internal Server Error"
     });
-
   }
 };
 

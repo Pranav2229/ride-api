@@ -212,6 +212,28 @@ const emitPaymentCompleted = (userId, driverId, rideId, amount, method) => {
   }
 };
 
+const emitDriverKycUpdate = (driverId, status, reason = null) => {
+  try {
+    const io = getIO();
+    if (!io) return;
+
+    const driverSocket = onlineDrivers.get(Number(driverId));
+    if (driverSocket) {
+      io.to(driverSocket).emit("driver_kyc_update", {
+        driver_id: driverId,
+        status,          // 'APPROVED' | 'REJECTED'
+        reason,
+        updated_at: new Date().toISOString(),
+      });
+      console.log(`✅ driver_kyc_update → driver ${driverId}: ${status}`);
+    } else {
+      console.log(`⚠️ driver ${driverId} not online — KYC update not delivered`);
+    }
+  } catch (e) {
+    console.error("emitDriverKycUpdate error:", e);
+  }
+};
+
 module.exports = {
     emitRideToDrivers,
     emitRideAccepted,
@@ -221,7 +243,8 @@ module.exports = {
     emitRideCompleted,
     emitRideCancelled,
     emitRidePaid,
-    emitPaymentCompleted
+    emitPaymentCompleted,
+    emitDriverKycUpdate
 };
 
 // const { getIO } = require("../index");

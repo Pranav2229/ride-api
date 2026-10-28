@@ -22,7 +22,8 @@ const {
     updateKycSection,
     getCustomers,
     toggleCustomerBlock,
-    getDrivers 
+    getDrivers ,
+    toggleDriverBlock
 } = require('../../controllers/Admin/Admin.Controller.js');
 const authMiddleware = require("../../middleware/Auth.token.js");
 
@@ -68,6 +69,7 @@ router.post("/drivers/:id/kyc/section/:section/status", authMiddleware, updateKy
 router.get("/customers", authMiddleware, getCustomers);
 router.post("/customers/:id/block", authMiddleware, toggleCustomerBlock);
 router.get("/drivers", authMiddleware, getDrivers);
+router.post("/drivers/:id/block", authMiddleware, toggleDriverBlock);
 
 
 module.exports = router;

@@ -736,6 +736,43 @@ const getDrivers = async (req, res) => {
   }
 };
 
+const toggleDriverBlock = async (req, res) => {
+  try {
+    const adminId = req.user?.adminId;
+    const driverId = Number(req.params.id);
+
+    // ⚠️ Fix the classic Boolean("false") === true bug
+    const raw = req.body?.is_blocked;
+    const isBlocked =
+      raw === true || raw === "true" || raw === 1 || raw === "1";
+
+    if (!Number.isInteger(driverId) || driverId <= 0) {
+      return res.status(400).json({ success: false, message: "Invalid driver id" });
+    }
+
+    const result = await pool.query(
+      `CALL public.admin_toggle_driver_block($1, $2, $3, NULL)`,
+      [driverId, isBlocked, adminId]
+    );
+
+    const response = result.rows[0]?.p_response;
+    if (!response?.success) {
+      return res
+        .status(400)
+        .json({ success: false, message: response?.message || "Failed" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: response.message,
+      data: response.data,
+    });
+  } catch (error) {
+    console.error("toggleDriverBlock error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   adminLogin,
   getDashboardKpis,
@@ -755,5 +792,6 @@ module.exports = {
   updateKycSection,
   getCustomers,
   toggleCustomerBlock,
-  getDrivers
+  getDrivers,
+  toggleDriverBlock
 };

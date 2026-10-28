@@ -3,6 +3,10 @@ const pool = require("../../middleware/db.connection.js");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { validationResult } = require("express-validator");
+const { emitDriverKycUpdate } = require("../../sockets/RideSocket/ride.socket.js");
+
+const BASE_URL = process.env.API_BASE_URL
+
 
 const adminLogin = async (req, res) => {
   try {
@@ -268,6 +272,469 @@ const getDashboardOverview = async (req, res) => {
   }
 };
 
+// =====================================================
+// GET /api/admin/drivers/kyc-list?status=PENDING&search=&limit=50&offset=0
+// =====================================================
+const getKycList = async (req, res) => {
+  try {
+    const status = (req.query.status || "PENDING").toUpperCase();
+    const search = req.query.search || "";
+    const limit = Number(req.query.limit) || 50;
+    const offset = Number(req.query.offset) || 0;
+
+    if (!["PENDING", "APPROVED", "REJECTED"].includes(status)) {
+      return res.status(400).json({ success: false, message: "Invalid status" });
+    }
+
+    const result = await pool.query(
+      `CALL public.admin_get_driver_kyc_list($1, $2, $3, $4, NULL)`,
+      [status, search, limit, offset]
+    );
+
+    if (!result.rows || result.rows.length === 0) {
+      return res.status(400).json({ success: false, message: "Unable to fetch KYC list" });
+    }
+
+    const response = result.rows[0].p_response;
+
+    if (!response.success) {
+      return res.status(400).json({ success: false, message: response.message });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: response.data,
+      total: response.total,
+      limit: response.limit,
+      offset: response.offset,
+    });
+  } catch (error) {
+    console.error("getKycList error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// =====================================================
+// GET /api/admin/drivers/:id/kyc
+// =====================================================
+const getKycDetail = async (req, res) => {
+  try {
+    const driverId = Number(req.params.id);
+
+    if (!Number.isInteger(driverId) || driverId <= 0) {
+      return res.status(400).json({ success: false, message: "Invalid driver id" });
+    }
+
+    const result = await pool.query(
+      `CALL public.admin_get_driver_kyc_detail($1, $2, NULL)`,
+      [driverId, BASE_URL]
+    );
+
+    if (!result.rows || result.rows.length === 0) {
+      return res.status(400).json({ success: false, message: "Unable to fetch driver" });
+    }
+
+    const response = result.rows[0].p_response;
+
+    if (!response.success) {
+      return res.status(404).json({ success: false, message: response.message });
+    }
+
+    return res.status(200).json({ success: true, data: response.data });
+  } catch (error) {
+    console.error("getKycDetail error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// =====================================================
+// POST /api/admin/drivers/:id/kyc/approve
+// =====================================================
+const approveKyc = async (req, res) => {
+  try {
+    const adminId = req.user?.adminId;   // ← JWT payload has adminId
+    const driverId = Number(req.params.id);
+
+    if (!Number.isInteger(driverId) || driverId <= 0) {
+      return res.status(400).json({ success: false, message: "Invalid driver id" });
+    }
+
+    const result = await pool.query(
+      `CALL public.admin_approve_driver_kyc($1, $2, NULL)`,
+      [driverId, adminId]
+    );
+
+    const response = result.rows[0]?.p_response;
+
+    if (!response?.success) {
+      return res.status(400).json({ success: false, message: response?.message || "Failed" });
+    }
+
+    // Socket notification
+    emitDriverKycUpdate(driverId, "APPROVED", null);
+
+    return res.status(200).json({
+      success: true,
+      message: "Driver KYC approved",
+      data: response.data,
+    });
+  } catch (error) {
+    console.error("approveKyc error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// =====================================================
+// POST /api/admin/drivers/:id/kyc/reject
+// Body: { reason }
+// =====================================================
+const rejectKyc = async (req, res) => {
+  try {
+    const adminId = req.user?.adminId;   // ← JWT payload has adminId
+    const driverId = Number(req.params.id);
+    const reason = String(req.body.reason || "").trim();
+
+    if (!Number.isInteger(driverId) || driverId <= 0) {
+      return res.status(400).json({ success: false, message: "Invalid driver id" });
+    }
+
+    if (reason.length < 5) {
+      return res.status(400).json({
+        success: false,
+        message: "Rejection reason must be at least 5 characters",
+      });
+    }
+
+    const result = await pool.query(
+      `CALL public.admin_reject_driver_kyc($1, $2, $3, NULL)`,
+      [driverId, adminId, reason]
+    );
+
+    const response = result.rows[0]?.p_response;
+
+    if (!response?.success) {
+      return res.status(400).json({ success: false, message: response?.message || "Failed" });
+    }
+
+    // Socket notification
+    emitDriverKycUpdate(driverId, "REJECTED", reason);
+
+    return res.status(200).json({
+      success: true,
+      message: "Driver KYC rejected",
+      data: response.data,
+    });
+  } catch (error) {
+    console.error("rejectKyc error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// =====================================================
+// GET /api/admin/drivers/kyc-stats
+// =====================================================
+const getKycStats = async (req, res) => {
+  try {
+    const result = await pool.query(`CALL public.admin_get_kyc_stats(NULL)`);
+    const response = result.rows[0]?.p_response;
+
+    if (!response?.success) {
+      return res.status(400).json({ success: false, message: response?.message || "Failed" });
+    }
+
+    return res.status(200).json({ success: true, data: response.data });
+  } catch (error) {
+    console.error("getKycStats error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getDocumentsList = async (req, res) => {
+  try {
+    const filter = (req.query.filter || "ALL").toUpperCase();
+    const search = req.query.search || "";
+
+    if (!["ALL", "VERIFIED", "PENDING", "REJECTED"].includes(filter)) {
+      return res.status(400).json({ success: false, message: "Invalid filter" });
+    }
+
+    const result = await pool.query(
+      `CALL public.admin_get_driver_documents_list($1, $2, NULL)`,
+      [filter, search]
+    );
+
+    const response = result.rows[0]?.p_response;
+
+    if (!response?.success) {
+      return res.status(400).json({ success: false, message: response?.message || "Failed" });
+    }
+
+    return res.status(200).json({ success: true, data: response.data });
+  } catch (error) {
+    console.error("getDocumentsList error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// =====================================================
+// GET /api/admin/drivers/:id/documents
+// =====================================================
+const getDriverDocuments = async (req, res) => {
+  try {
+    const driverId = Number(req.params.id);
+    if (!Number.isInteger(driverId) || driverId <= 0) {
+      return res.status(400).json({ success: false, message: "Invalid driver id" });
+    }
+
+    const result = await pool.query(
+      `CALL public.admin_get_driver_documents_detail($1, $2, NULL)`,
+      [driverId, BASE_URL]
+    );
+
+    const response = result.rows[0]?.p_response;
+
+    if (!response?.success) {
+      return res.status(404).json({ success: false, message: response?.message || "Driver not found" });
+    }
+
+    return res.status(200).json({ success: true, data: response.data });
+  } catch (error) {
+    console.error("getDriverDocuments error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// =====================================================
+// POST /api/admin/drivers/:id/documents/:key/status
+// Body: { status: 'VERIFIED' | 'REJECTED' | 'PENDING', reason?: string }
+// =====================================================
+const updateDocumentStatus = async (req, res) => {
+  try {
+    const adminId = req.user?.adminId;   // ← JWT payload has adminId
+    const driverId = Number(req.params.id);
+    const documentKey = req.params.key;
+    const status = String(req.body.status || "").toUpperCase();
+    const reason = req.body.reason ? String(req.body.reason).trim() : null;
+
+    if (!Number.isInteger(driverId) || driverId <= 0) {
+      return res.status(400).json({ success: false, message: "Invalid driver id" });
+    }
+
+    if (!["VERIFIED", "REJECTED", "PENDING"].includes(status)) {
+      return res.status(400).json({ success: false, message: "Invalid status" });
+    }
+
+    if (status === "REJECTED" && (!reason || reason.length < 5)) {
+      return res.status(400).json({
+        success: false,
+        message: "Rejection reason must be at least 5 characters",
+      });
+    }
+
+    const result = await pool.query(
+      `CALL public.admin_update_document_status($1, $2, $3, $4, $5, NULL)`,
+      [driverId, documentKey, status, reason, adminId]
+    );
+
+    const response = result.rows[0]?.p_response;
+
+    if (!response?.success) {
+      return res.status(400).json({ success: false, message: response?.message || "Failed" });
+    }
+
+    // Socket to driver
+    emitDriverKycUpdate(driverId, response.data.overall_status, reason);
+
+    return res.status(200).json({
+      success: true,
+      message: response.message,
+      data: response.data,
+    });
+  } catch (error) {
+    console.error("updateDocumentStatus error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+
+// const rejectKyc = async (req, res) => {
+//   try {
+//     if (!req.admin?.id) {
+//       return res.status(401).json({ success: false, message: "Not authenticated" });
+//     }
+
+//     const adminId = req.admin.id;
+//     const driverId = Number(req.params.id);
+//     const reason = String(req.body.reason || "").trim();
+
+//     if (!Number.isInteger(driverId) || driverId <= 0) {
+//       return res.status(400).json({ success: false, message: "Invalid driver id" });
+//     }
+
+//     if (reason.length < 5) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Rejection reason must be at least 5 characters",
+//       });
+//     }
+
+//     const result = await pool.query(
+//       `CALL public.admin_reject_driver_kyc($1, $2, $3, NULL)`,
+//       [driverId, adminId, reason]
+//     );
+
+//     const response = result.rows[0]?.p_response;
+//     if (!response?.success) {
+//       return res.status(400).json({ success: false, message: response?.message || "Failed" });
+//     }
+
+//     emitDriverKycUpdate(driverId, "REJECTED", reason);
+
+//     return res.status(200).json({
+//       success: true,
+//       message: "Driver KYC rejected",
+//       data: response.data,
+//     });
+//   } catch (error) {
+//     console.error("rejectKyc error:", error);
+//     return res.status(500).json({ success: false, message: error.message });
+//   }
+// };
+
+// =====================================================
+// POST /api/admin/drivers/:id/kyc/section/:section/status
+// Body: { status: 'VERIFIED'|'REJECTED'|'PENDING', reason? }
+// =====================================================
+const updateKycSection = async (req, res) => {
+  try {
+    if (!req.user?.adminId) {
+      return res.status(401).json({ success: false, message: "Not authenticated" });
+    }
+
+    const adminId = req.user?.adminId;
+    const driverId = Number(req.params.id);
+    const section = String(req.params.section || "").toLowerCase();
+    const status = String(req.body.status || "").toUpperCase();
+    const reason = req.body.reason ? String(req.body.reason).trim() : null;
+
+    if (!Number.isInteger(driverId) || driverId <= 0) {
+      return res.status(400).json({ success: false, message: "Invalid driver id" });
+    }
+
+    if (!["vehicle", "bank"].includes(section)) {
+      return res.status(400).json({ success: false, message: "Invalid section" });
+    }
+
+    if (!["VERIFIED", "REJECTED", "PENDING"].includes(status)) {
+      return res.status(400).json({ success: false, message: "Invalid status" });
+    }
+
+    if (status === "REJECTED" && (!reason || reason.length < 5)) {
+      return res.status(400).json({
+        success: false,
+        message: "Rejection reason must be at least 5 characters",
+      });
+    }
+
+    const result = await pool.query(
+      `CALL public.admin_update_kyc_section($1, $2, $3, $4, $5, NULL)`,
+      [driverId, section, status, reason, adminId]
+    );
+
+    const response = result.rows[0]?.p_response;
+    if (!response?.success) {
+      return res.status(400).json({ success: false, message: response?.message || "Failed" });
+    }
+
+    emitDriverKycUpdate(driverId, status, reason);
+
+    return res.status(200).json({
+      success: true,
+      message: response.message,
+      data: response.data,
+    });
+  } catch (error) {
+    console.error("updateKycSection error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// =====================================================
+// GET /api/admin/customers
+// =====================================================
+const getCustomers = async (req, res) => {
+  try {
+    const search = req.query.search || "";
+    const result = await pool.query(
+      `CALL public.admin_get_customers($1, NULL)`,
+      [search]
+    );
+
+    const response = result.rows[0]?.p_response;
+    if (!response?.success) {
+      return res.status(400).json({ success: false, message: response?.message || "Failed" });
+    }
+
+    return res.status(200).json({ success: true, data: response.data });
+  } catch (error) {
+    console.error("getCustomers error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// =====================================================
+// POST /api/admin/customers/:id/block
+// Body: { is_blocked: true | false }
+// =====================================================
+const toggleCustomerBlock = async (req, res) => {
+  try {
+    const userId = Number(req.params.id);
+    const isBlocked = Boolean(req.body.is_blocked);
+
+    if (!Number.isInteger(userId) || userId <= 0) {
+      return res.status(400).json({ success: false, message: "Invalid customer ID" });
+    }
+
+    const result = await pool.query(
+      `CALL public.admin_toggle_customer_block($1, $2, NULL)`,
+      [userId, isBlocked]
+    );
+
+    const response = result.rows[0]?.p_response;
+    if (!response?.success) {
+      return res.status(400).json({ success: false, message: response?.message || "Failed" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: response.message,
+      data: response.data,
+    });
+  } catch (error) {
+    console.error("toggleCustomerBlock error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getDrivers = async (req, res) => {
+  try {
+    const search = req.query.search || "";
+    const result = await pool.query(
+      `CALL public.admin_get_drivers($1, NULL)`,
+      [search]
+    );
+
+    const response = result.rows[0]?.p_response;
+    if (!response?.success) {
+      return res.status(400).json({ success: false, message: response?.message || "Failed" });
+    }
+
+    return res.status(200).json({ success: true, data: response.data });
+  } catch (error) {
+    console.error("getDrivers error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
 
 module.exports = {
   adminLogin,
@@ -277,4 +744,16 @@ module.exports = {
   getDashboardLiveRides,
   getDashboardRecentCancellations,
   getDashboardOverview,
+  getKycList,
+  getKycDetail,
+  approveKyc,
+  rejectKyc,
+  getKycStats,
+  getDocumentsList,
+  getDriverDocuments,
+  updateDocumentStatus,
+  updateKycSection,
+  getCustomers,
+  toggleCustomerBlock,
+  getDrivers
 };

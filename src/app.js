@@ -73,20 +73,37 @@ app.use(limiter);
 require("./services/rideScheduler.js")(pool);
 
 
-app.use(
-    "/public",
-    express.static(path.join(__dirname, "public"), {
-        dotfiles: "deny",
-        extensions: ["html", "css", "js"],
-        maxAge: "1h",           // ✅ cache static for 1 hour
-        immutable: true,
-    })
-);
+// app.use(
+//     "/public",
+//     express.static(path.join(__dirname, "public"), {
+//         dotfiles: "deny",
+//         extensions: ["html", "css", "js"],
+//         maxAge: "1h",           // ✅ cache static for 1 hour
+//         immutable: true,
+//     })
+// );
 
 app.use(
     "/uploads",
-    express.static(path.join(__dirname, "uploads"))
+    (req, res, next) => {
+        // Allow any origin to load images
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+        // Remove any blocking headers set by middleware above
+        res.removeHeader("Cross-Origin-Embedder-Policy");
+        next();
+    },
+    express.static(path.join(__dirname, "uploads"), {
+        setHeaders: (res) => {
+            res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+        },
+    })
 );
+
+// app.use(
+//     "/uploads",
+//     express.static(path.join(__dirname, "uploads"))
+// );
 app.use(
     "/public",
     express.static(path.join(__dirname, "public"), {

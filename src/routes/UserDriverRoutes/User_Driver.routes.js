@@ -12,7 +12,7 @@ const authMiddleware = require("../../middleware/Auth.token.js");
 const {
     getIO
 } = require("../../sockets/index.js");
-
+const verifySession = require("../../middleware/SessionHandling/VarifyingSession.js")
 router.post(
     "/cancel_ride",
     authMiddleware,
@@ -39,15 +39,15 @@ router.post(
 router.post('/refresh_token', refreshToken);
 
 router.post(
-  "/resend_user_otp",
-  [
-    body("user_id")
-     .trim()
-      .notEmpty()
-      .isInt()
-      .withMessage("User ID must be a valid number")
-  ],
-  resendUserOTP
+    "/resend_user_otp",
+    [
+        body("user_id")
+            .trim()
+            .notEmpty()
+            .isInt()
+            .withMessage("User ID must be a valid number")
+    ],
+    resendUserOTP
 );
 
 module.exports = router;

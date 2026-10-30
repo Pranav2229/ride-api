@@ -36,7 +36,7 @@ const {
   getUnpaidRides
 } = require('../../controllers/UserAuthentication/User.Controller.js');
 const authMiddleware = require("../../middleware/Auth.token.js");
-
+const verifySession = require('../../middleware/SessionHandling/VarifyingSession.js')
 // router.post("/login_user", [
 //   body("email")
 //     .notEmpty()
@@ -115,7 +115,7 @@ router.post(
 
 router.put(
   "/update_user_profile",
-  authMiddleware,
+  authMiddleware, verifySession,
   [
     body("full_name")
       .trim()
@@ -146,7 +146,7 @@ router.put(
 );
 router.post(
   "/create_ride",
-  authMiddleware,
+  authMiddleware, verifySession,
   [
     body("pickup_address")
       .notEmpty()
@@ -181,7 +181,7 @@ router.post(
 
 router.post(
   "/nearby_drivers",
-  authMiddleware,
+  authMiddleware, verifySession,
   [
     body("latitude")
       .notEmpty()
@@ -205,7 +205,7 @@ router.post(
 
 router.get(
   "/get_user_rides",
-  authMiddleware,
+  authMiddleware, verifySession,
   getUserRides
 );
 
@@ -226,11 +226,11 @@ router.post(
 );
 
 
-router.get("/wallet", authMiddleware, getWallet);
+router.get("/wallet", authMiddleware, verifySession, getWallet);
 
 router.post(
   "/wallet/add_money",
-  authMiddleware,
+  authMiddleware, verifySession,
   [
     body("amount")
       .notEmpty()
@@ -242,15 +242,15 @@ router.post(
   addMoneyToWallet
 );
 
-router.get("/notifications", authMiddleware, getNotifications);
-router.post("/notifications/read_all", authMiddleware, markAllAsRead);
-router.post("/notifications/:id/read", authMiddleware, markAsRead);
-router.delete("/notifications/:id", authMiddleware, deleteNotification);
-router.get("/offers", authMiddleware, getOffers);
+router.get("/notifications", authMiddleware, verifySession, getNotifications);
+router.post("/notifications/read_all", authMiddleware, verifySession, markAllAsRead);
+router.post("/notifications/:id/read", authMiddleware, verifySession, markAsRead);
+router.delete("/notifications/:id", authMiddleware, verifySession, deleteNotification);
+router.get("/offers", authMiddleware, verifySession, getOffers);
 
 router.post(
   "/coupons/validate",
-  authMiddleware,
+  authMiddleware, verifySession,
   [
     body("code").trim().notEmpty().withMessage("Coupon code is required"),
     body("ride_amount")
@@ -260,7 +260,7 @@ router.post(
   validateCoupon
 );
 
-router.get("/rewards", authMiddleware, getRewards);
+router.get("/rewards", authMiddleware, verifySession, getRewards);
 
 
 const addressValidators = [
@@ -272,30 +272,30 @@ const addressValidators = [
   body("longitude").optional({ nullable: true }).isFloat({ min: -180, max: 180 })
     .withMessage("Invalid longitude"),
 ]
-router.get("/addresses", authMiddleware, getAddresses);
-router.post("/add_addresses", authMiddleware, addressValidators, addAddress);
-router.put("/update_addresses/:id", authMiddleware, updateAddress);
-router.delete("/delete_addresses/:id", authMiddleware, deleteAddress);
-router.post("/addresses/:id/default", authMiddleware, setDefaultAddress)
+router.get("/addresses", authMiddleware, verifySession, getAddresses);
+router.post("/add_addresses", authMiddleware, verifySession, addressValidators, addAddress);
+router.put("/update_addresses/:id", authMiddleware, verifySession, updateAddress);
+router.delete("/delete_addresses/:id", authMiddleware, verifySession, deleteAddress);
+router.post("/addresses/:id/default", authMiddleware, verifySession, setDefaultAddress)
 
-router.get("/referrals", authMiddleware, getReferralInfo);
+router.get("/referrals", authMiddleware, verifySession, getReferralInfo);
 
 router.post(
   "/referrals/apply",
-  authMiddleware,
+  authMiddleware, verifySession,
   [body("code").trim().notEmpty().withMessage("Referral code is required")],
   // validate,
   applyReferralCode
 );
 
-router.get("/rides/active", authMiddleware, getActiveRide);
-router.get("/places/search", authMiddleware, searchPlacesController);
-router.get("/places/route", authMiddleware, getRouteController);
-router.get("/rides/unpaid", authMiddleware, getUnpaidRides);
+router.get("/rides/active", authMiddleware, verifySession, getActiveRide);
+router.get("/places/search", authMiddleware, verifySession, searchPlacesController);
+router.get("/places/route", authMiddleware, verifySession, getRouteController);
+router.get("/rides/unpaid", authMiddleware, verifySession, getUnpaidRides);
 
 router.post(
   "/rides/estimate",
-  authMiddleware,
+  authMiddleware, verifySession,
   [
     body("distance_km")
       .notEmpty().withMessage("distance_km is required")
@@ -310,10 +310,10 @@ router.post(
   estimateFares
 );
 
-router.get("/rides/:id", authMiddleware, getRideById);
+router.get("/rides/:id", authMiddleware, verifySession, getRideById);
 router.post(
   "/rides/:id/rate",
-  authMiddleware,
+  authMiddleware, verifySession,
   [
     body("rating").notEmpty().withMessage("Rating is required").isFloat({ min: 1, max: 5 }).withMessage("Rating must be 1–5"),
     body("review").optional({ nullable: true, checkFalsy: true }).trim().isLength({ max: 500 }),

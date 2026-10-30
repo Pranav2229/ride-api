@@ -39,7 +39,7 @@ const {
 } = require('../../controllers/DriverAuthentication/Driver.Controller.js');
 const uploadDocument = require("../../middleware/uploadDocument.js")
 const authMiddleware = require("../../middleware/Auth.token.js");
-
+const verifyDriverSession = require("../../middleware/SessionHandling/DriverSession.js")
 const validate = (req, res, next) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -193,7 +193,7 @@ router.post(
 
 router.post(
   "/accept_ride",
-  authMiddleware,
+  authMiddleware,verifyDriverSession,
   [
     body("ride_id")
       .notEmpty()
@@ -212,7 +212,7 @@ router.post(
 
 router.post(
   "/start_ride",
-  authMiddleware,
+  authMiddleware,verifyDriverSession,
   [
     body("ride_id")
       .notEmpty()
@@ -233,7 +233,7 @@ router.post(
 
 router.post(
   "/complete_ride",
-  authMiddleware,
+  authMiddleware,verifyDriverSession,
   [
     body("ride_id")
       .notEmpty()
@@ -247,7 +247,7 @@ router.post(
 
 router.post(
   "/update_location",
-  authMiddleware,
+  authMiddleware,verifyDriverSession,
   [
     body("latitude")
       .notEmpty()
@@ -276,7 +276,7 @@ router.post(
 
 router.get(
   "/get_driver_arnings",
-  authMiddleware,
+  authMiddleware,verifyDriverSession,
   getDriverEarnings
 );
 
@@ -298,30 +298,30 @@ router.post(
 
 router.post(
   "/upload_document",
-  authMiddleware,
+  authMiddleware,verifyDriverSession,
   uploadDocument.single("file"),
   uploadDriverDocument
 );
 
 router.get(
   "/document_status",
-  authMiddleware,
+  authMiddleware,verifyDriverSession,
   getDriverDocumentStatus
 );
 router.post(
   "/vehicle_details",
-  authMiddleware,
+  authMiddleware,verifyDriverSession,
   upsertVehicleDetails);
 
 router.get(
   "/vehicle_details",
-  authMiddleware,
+  authMiddleware,verifyDriverSession,
   getVehicleDetails);
 
 
 router.post(
   "/bank_details",
-  authMiddleware,
+  authMiddleware,verifyDriverSession,
   [
     body("account_holder_name")
       .trim()
@@ -374,27 +374,27 @@ router.post(
 
 router.get(
   "/get_bank_details",
-  authMiddleware,
+  authMiddleware,verifyDriverSession,
   getBankDetails
 );
 
 router.post(
   "/toggle_online",
-  authMiddleware,
+  authMiddleware,verifyDriverSession,
   [body("is_online").notEmpty().withMessage("is_online is required").isBoolean()],
   toggleOnline
 );
 
-router.get("/status", authMiddleware, getDriverStatus);
+router.get("/status", authMiddleware,verifyDriverSession, getDriverStatus);
 router.get(
   "/current_ride",
-  authMiddleware,
+  authMiddleware,verifyDriverSession,
   getCurrentRide
 );
 
 router.post(
   "/arrived_at_pickup",
-  authMiddleware,
+  authMiddleware,verifyDriverSession,
   [
     body("ride_id").notEmpty().withMessage("Ride ID is required").isInt().withMessage("Ride ID must be a number"),
   ],
@@ -404,21 +404,21 @@ router.post(
 
 // router.post(
 //   "/rides/:id/pay",
-//   authMiddleware,
+//   authMiddleware,verifyDriverSession,
 //   [body("payment_method").optional({ nullable: true, checkFalsy: true }).trim()],
 //   payForRide
 // );
 
 router.post(
   "/rides/:id/mark-paid",
-  authMiddleware,
+  authMiddleware,verifyDriverSession,
   [body("payment_method").optional({ nullable: true, checkFalsy: true }).trim()],
   markRidePaid
 );
 
 router.post(
   "/rides/:id/report-payment-issue",
-  authMiddleware,
+  authMiddleware,verifyDriverSession,
   [
     body("reason").trim().notEmpty().withMessage("Reason is required"),
     body("note").optional({ nullable: true, checkFalsy: true }).trim().isLength({ max: 500 }),
@@ -428,40 +428,40 @@ router.post(
 
 router.get(
   "/get_driver_rides",
-  authMiddleware,
+  authMiddleware,verifyDriverSession,
   getDriverRides
 );
 
 router.get(
   "/get_driver_wallet",
-  authMiddleware,
+  authMiddleware,verifyDriverSession,
   getDriverWallet
 );
 
 router.get(
   "/notifications",
-  authMiddleware,
+  authMiddleware,verifyDriverSession,
   getDriverNotifications
 );
 
 router.post(
   "/notifications/read_all",
-  authMiddleware,
+  authMiddleware,verifyDriverSession,
   markAllDriverNotificationsRead
 );
 
 router.post(
   "/notifications/:id/read",
-  authMiddleware,
+  authMiddleware,verifyDriverSession,
   markDriverNotificationRead
 );
 
 router.get(
   "/onboarding_status",
-  authMiddleware,
+  authMiddleware,verifyDriverSession,
   getOnboardingStatus
 );
 
-router.get("/pending_payments", authMiddleware, getPendingPayments);
-router.get("/rides/:id", authMiddleware, getDriverRideById);
+router.get("/pending_payments", authMiddleware,verifyDriverSession, getPendingPayments);
+router.get("/rides/:id", authMiddleware,verifyDriverSession, getDriverRideById);
 module.exports = router;

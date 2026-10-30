@@ -5,6 +5,7 @@ const {
     body,
     validationResult
 } = require("express-validator");
+const crypto = require("crypto");
 const {
     emitRideAccepted,
     emitRideStarted,
@@ -67,6 +68,18 @@ const loginDriver = async (req, res) => {
                 message: Driver.message
             });
         }
+
+        const sessionToken = crypto.randomUUID();
+        const deviceLabel = String(req.headers["x-device-label"] || "").slice(0, 200) || null;
+
+        await pool.query(
+            `UPDATE public.drivers
+               SET session_token = $1,
+                   session_device = $2,
+                   session_updated_at = CURRENT_TIMESTAMP
+             WHERE id = $3`,
+            [sessionToken, deviceLabel, Driver.data.driver_id]
+        );
 
         // ✅ Fetch driver's vehicle and attach vehicle_id
         try {
@@ -133,7 +146,8 @@ const loginDriver = async (req, res) => {
                 role: "DRIVER",
                 Driver,
                 accessToken,
-                refreshToken
+                refreshToken,
+                sessionToken
             }
         });
 
@@ -1155,6 +1169,20 @@ const verifyDriverOTP = async (req, res) => {
             });
         }
 
+        // ✅ NEW: session token for OTP-login path too
+        const sessionToken = crypto.randomUUID();
+        const deviceLabel = String(req.headers["x-device-label"] || "").slice(0, 200) || null;
+
+        await pool.query(
+            `UPDATE public.drivers
+               SET session_token = $1,
+                   session_device = $2,
+                   session_updated_at = CURRENT_TIMESTAMP
+             WHERE id = $3`,
+            [sessionToken, deviceLabel, response.data.driver_id]
+        );
+
+
         // // Access Token
         const accessToken = jwt.sign(
             {
@@ -1184,7 +1212,8 @@ const verifyDriverOTP = async (req, res) => {
                 role: "DRIVER",
                 response,
                 accessToken,
-                refreshToken
+                refreshToken,
+                sessionToken
             }
         });
 

@@ -17,37 +17,6 @@ const initSocket = (server) => {
         }
     });
 
-    // Socket Authentication Middleware
-    // io.use((socket, next) => {
-
-    //     try {
-
-    //         const token =
-    //             socket.handshake.auth.token;
-
-    //         if (!token) {
-    //             return next(
-    //                 new Error("No token provided")
-    //             );
-    //         }
-
-    //         const decoded = jwt.verify(
-    //             token,
-    //             process.env.JWT_SECRET
-    //         );
-
-    //         socket.user = decoded;
-
-    //         next();
-
-    //     } catch (error) {
-
-    //         next(
-    //             new Error("Invalid token")
-    //         );
-    //     }
-    // });
-
     io.use((socket, next) => {
         try {
 
@@ -83,21 +52,28 @@ const initSocket = (server) => {
         );
 
         // DRIVER ONLINE
-        socket.on(
-            "driver_online",
-            (driverId) => {
+        // socket.on(
+        //     "driver_online",
+        //     (driverId) => {
 
-                onlineDrivers.set(
-                    Number(driverId),
-                    socket.id
-                );
+        //         onlineDrivers.set(
+        //             Number(driverId),
+        //             socket.id
+        //         );
 
-                console.log(
-                    "🚗 Driver Online:",
-                    driverId
-                );
-            }
-        );
+        //         console.log(
+        //             "🚗 Driver Online:",
+        //             driverId
+        //         );
+        //     }
+        // );
+        socket.on("driver_online", (driverId) => {
+            const id = Number(driverId);
+            onlineDrivers.set(id, socket.id);
+            socket.join(`driver:${id}`);                    // ← ADD THIS LINE
+            console.log(`🚗 Driver Online: ${id} → room driver:${id}`);
+        });
+
 
         socket.on("driver_offline", (driverId) => {
             onlineDrivers.delete(Number(driverId));
@@ -105,21 +81,27 @@ const initSocket = (server) => {
         });
 
         // USER ONLINE
-        socket.on(
-            "user_online",
-            (userId) => {
+        // socket.on(
+        //     "user_online",
+        //     (userId) => {
 
-                onlineUsers.set(
-                    Number(userId),
-                    socket.id
-                );
+        //         onlineUsers.set(
+        //             Number(userId),
+        //             socket.id
+        //         );
 
-                console.log(
-                    "🙋 User Online:",
-                    userId
-                );
-            }
-        );
+        //         console.log(
+        //             "🙋 User Online:",
+        //             userId
+        //         );
+        //     }
+        // );
+        socket.on("user_online", (userId) => {
+            const id = Number(userId);
+            onlineUsers.set(id, socket.id);
+            socket.join(`user:${id}`);                      // ← ADD THIS LINE
+            console.log(`🙋 User Online: ${id} → room user:${id}`);
+        });
 
         socket.on(
             "disconnect",

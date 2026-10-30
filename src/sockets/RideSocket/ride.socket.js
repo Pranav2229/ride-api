@@ -138,14 +138,12 @@ const emitRideCompleted = (
 
 const emitRideCancelled = (userIdOrDriverId, data, recipientType) => {
     const io = getIO();
-    const socketId =
-        recipientType === "DRIVER"
-            ? onlineDrivers.get(Number(userIdOrDriverId))
-            : onlineUsers.get(Number(userIdOrDriverId));
+    const id = Number(userIdOrDriverId);
+    const room =
+        recipientType === "DRIVER" ? `driver:${id}` : `user:${id}`;
 
-    if (socketId) {
-        io.to(socketId).emit("ride_cancelled", data);
-    }
+    console.log(`📤 ride_cancelled → ${room}`, data);
+    io.to(room).emit("ride_cancelled", data);
 };
 
 const emitRidePaid = (recipientId, data, recipientType = "USER") => {
@@ -166,72 +164,72 @@ const emitRidePaid = (recipientId, data, recipientType = "USER") => {
  * confirms cash collection.
  */
 const emitPaymentCompleted = (userId, driverId, rideId, amount, method) => {
-  try {
-    const io = getIO();
-    if (!io) {
-      console.log("⚠️ payment_completed SKIPPED — io is null");
-      return;
+    try {
+        const io = getIO();
+        if (!io) {
+            console.log("⚠️ payment_completed SKIPPED — io is null");
+            return;
+        }
+
+        const payload = {
+            rideId,
+            ride_id: rideId,          // ✅ both naming conventions
+            amount,
+            method,
+            paidAt: new Date().toISOString(),
+        };
+
+        console.log("📤 emitPaymentCompleted payload:", payload);
+        console.log("📤 onlineUsers size:", onlineUsers.size);
+        console.log("📤 onlineDrivers size:", onlineDrivers.size);
+
+        // ─── Customer ───
+        const userSocket = onlineUsers.get(Number(userId));
+        if (userSocket) {
+            io.to(userSocket).emit("payment_completed", payload);
+            console.log(`✅ payment_completed → user ${userId} (socket ${userSocket})`);
+        } else {
+            console.log(`⚠️ SKIPPED user ${userId} — not in onlineUsers`);
+        }
+
+        // ─── Driver ───
+        if (driverId) {
+            const driverSocket = onlineDrivers.get(Number(driverId));
+            if (driverSocket) {
+                io.to(driverSocket).emit("payment_completed", payload);
+                console.log(`✅ payment_completed → driver ${driverId} (socket ${driverSocket})`);
+            } else {
+                console.log(`⚠️ SKIPPED driver ${driverId} — not in onlineDrivers`);
+                console.log(`   onlineDrivers keys: [${[...onlineDrivers.keys()].join(", ")}]`);
+            }
+        } else {
+            console.log("⚠️ SKIPPED driver — driverId is null");
+        }
+    } catch (e) {
+        console.error("❌ emitPaymentCompleted error:", e);
     }
-
-    const payload = {
-      rideId,
-      ride_id: rideId,          // ✅ both naming conventions
-      amount,
-      method,
-      paidAt: new Date().toISOString(),
-    };
-
-    console.log("📤 emitPaymentCompleted payload:", payload);
-    console.log("📤 onlineUsers size:", onlineUsers.size);
-    console.log("📤 onlineDrivers size:", onlineDrivers.size);
-
-    // ─── Customer ───
-    const userSocket = onlineUsers.get(Number(userId));
-    if (userSocket) {
-      io.to(userSocket).emit("payment_completed", payload);
-      console.log(`✅ payment_completed → user ${userId} (socket ${userSocket})`);
-    } else {
-      console.log(`⚠️ SKIPPED user ${userId} — not in onlineUsers`);
-    }
-
-    // ─── Driver ───
-    if (driverId) {
-      const driverSocket = onlineDrivers.get(Number(driverId));
-      if (driverSocket) {
-        io.to(driverSocket).emit("payment_completed", payload);
-        console.log(`✅ payment_completed → driver ${driverId} (socket ${driverSocket})`);
-      } else {
-        console.log(`⚠️ SKIPPED driver ${driverId} — not in onlineDrivers`);
-        console.log(`   onlineDrivers keys: [${[...onlineDrivers.keys()].join(", ")}]`);
-      }
-    } else {
-      console.log("⚠️ SKIPPED driver — driverId is null");
-    }
-  } catch (e) {
-    console.error("❌ emitPaymentCompleted error:", e);
-  }
 };
 
 const emitDriverKycUpdate = (driverId, status, reason = null) => {
-  try {
-    const io = getIO();
-    if (!io) return;
+    try {
+        const io = getIO();
+        if (!io) return;
 
-    const driverSocket = onlineDrivers.get(Number(driverId));
-    if (driverSocket) {
-      io.to(driverSocket).emit("driver_kyc_update", {
-        driver_id: driverId,
-        status,          // 'APPROVED' | 'REJECTED'
-        reason,
-        updated_at: new Date().toISOString(),
-      });
-      console.log(`✅ driver_kyc_update → driver ${driverId}: ${status}`);
-    } else {
-      console.log(`⚠️ driver ${driverId} not online — KYC update not delivered`);
+        const driverSocket = onlineDrivers.get(Number(driverId));
+        if (driverSocket) {
+            io.to(driverSocket).emit("driver_kyc_update", {
+                driver_id: driverId,
+                status,          // 'APPROVED' | 'REJECTED'
+                reason,
+                updated_at: new Date().toISOString(),
+            });
+            console.log(`✅ driver_kyc_update → driver ${driverId}: ${status}`);
+        } else {
+            console.log(`⚠️ driver ${driverId} not online — KYC update not delivered`);
+        }
+    } catch (e) {
+        console.error("emitDriverKycUpdate error:", e);
     }
-  } catch (e) {
-    console.error("emitDriverKycUpdate error:", e);
-  }
 };
 
 module.exports = {

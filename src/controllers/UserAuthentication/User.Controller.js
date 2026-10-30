@@ -184,6 +184,21 @@ const loginUser = async (req, res) => {
       });
     }
 
+    // ✅ NEW: generate a new session token and overwrite the old one.
+    // This immediately invalidates any previously logged-in device.
+    const sessionToken = crypto.randomUUID();          // Node 14.17+ has crypto.randomUUID
+    // If you're on an older Node, use: crypto.randomBytes(32).toString("hex")
+    const deviceLabel = String(req.headers["x-device-label"] || "").slice(0, 200) || null;
+
+    await pool.query(
+      `UPDATE public.users
+         SET session_token = $1,
+             session_device = $2,
+             session_updated_at = CURRENT_TIMESTAMP
+       WHERE id = $3`,
+      [sessionToken, deviceLabel, user.data.user_id]
+    );
+
     // Access Token
     const accessToken = jwt.sign(
       {
@@ -219,7 +234,8 @@ const loginUser = async (req, res) => {
       data: {
         user,
         accessToken,
-        refreshToken
+        refreshToken,
+        sessionToken
       }
     });
 
@@ -2281,7 +2297,6 @@ const rateRide = async (req, res) => {
 const getUnpaidRides = async (req, res) => {
   try {
     const userId = req.user.userId;
-
     const { rows } = await pool.query(
       `SELECT id, ride_unique_id, ride_status, payment_status, payment_method,
               final_amount, pickup_address, drop_address, ride_completed_at

@@ -5,18 +5,18 @@ const {
     body,
     validationResult
 } = require("express-validator");
+const crypto = require("crypto");
 const {
     emitRideAccepted,
     emitRideStarted,
     emitRideCompleted,
-    emitDriverLocation
+    emitDriverLocation,
+    emitDriverArrived
 } = require("../../sockets/RideSocket/ride.socket.js");
 const { generateOTP } = require("../../middleware/otp.js")
 
-
 const loginDriver = async (req, res) => {
     try {
-        // Check Validation Errors
         const errors = validationResult(req);
         if (!errors.isEmpty()) {
             return res.status(400).json({
@@ -24,20 +24,42 @@ const loginDriver = async (req, res) => {
                 errors: errors.array()
             });
         }
-        const { email, password } = req.body;
+
+        // ✅ Accept email, phone, or identifier (in that preference order)
+        const rawIdentifier =
+            req.body.identifier ||
+            req.body.email ||
+            req.body.phone ||
+            "";
+
+        const identifier = String(rawIdentifier).trim();
+        const password = String(req.body.password || "").trim();
+
+        if (!identifier || !password) {
+            return res.status(400).json({
+                success: false,
+                message: "Email/phone and password are required"
+            });
+        }
+
+        console.log("🔍 Driver login:", {
+            identifier,
+            type: identifier.includes("@") ? "email" : "phone"
+        });
 
         // Execute Stored Procedure
         const result = await pool.query(
             `CALL public.Login_Driver($1, $2, NULL)`,
-            [email, password]
+            [identifier, password]
         );
 
         if (result.rows.length === 0) {
             return res.status(401).json({
                 success: false,
-                message: "Invalid email or password"
+                message: "Invalid email/phone or password"
             });
         }
+
         const Driver = result.rows[0].p_response;
 
         if (!Driver.success) {
@@ -46,64 +68,74 @@ const loginDriver = async (req, res) => {
                 message: Driver.message
             });
         }
-        // // Access Token
+
+        const sessionToken = crypto.randomUUID();
+        const deviceLabel = String(req.headers["x-device-label"] || "").slice(0, 200) || null;
+
+        await pool.query(
+            `UPDATE public.drivers
+               SET session_token = $1,
+                   session_device = $2,
+                   session_updated_at = CURRENT_TIMESTAMP
+             WHERE id = $3`,
+            [sessionToken, deviceLabel, Driver.data.driver_id]
+        );
+
+        // ✅ Fetch driver's vehicle and attach vehicle_id
+        try {
+            const vehicleRes = await pool.query(
+                `SELECT id, vehicle_type, vehicle_number, vehicle_model, vehicle_color
+         FROM public.vehicles
+         WHERE driver_id = $1
+         LIMIT 1`,
+                [Driver.data.driver_id]
+            );
+
+            if (vehicleRes.rows.length > 0) {
+                Driver.data.vehicle_id = vehicleRes.rows[0].id;
+                Driver.data.vehicle = {
+                    id: vehicleRes.rows[0].id,
+                    vehicle_type: vehicleRes.rows[0].vehicle_type,
+                    vehicle_number: vehicleRes.rows[0].vehicle_number,
+                    vehicle_model: vehicleRes.rows[0].vehicle_model,
+                    vehicle_color: vehicleRes.rows[0].vehicle_color,
+                };
+            } else {
+                Driver.data.vehicle_id = null;
+                Driver.data.vehicle = null;
+            }
+        } catch (vehicleErr) {
+            console.log("Vehicle fetch during login failed:", vehicleErr.message);
+            Driver.data.vehicle_id = null;
+            Driver.data.vehicle = null;
+        }
+
+        // Access Token
         const accessToken = jwt.sign(
             {
                 userId: Driver.data.driver_id,
                 fullName: Driver.data.full_name
             },
             process.env.JWT_ACCESS_SECRET,
-            {
-                expiresIn: "15m"
-            }
+            { expiresIn: "15m" }
         );
-        // // Refresh Token
+
+        // Refresh Token
         const refreshToken = jwt.sign(
-            {
-                userId: Driver.data.driver_id
-            },
+            { userId: Driver.data.driver_id },
             process.env.JWT_REFRESH_SECRET,
-            {
-                expiresIn: "7d"
-            }
+            { expiresIn: "7d" }
         );
 
-        if (Driver.data.verification_status == 'PENDING') {
-            // Get Driver ID
+        if (Driver.data.verification_status === 'PENDING') {
             const driver_id = Driver.data.driver_id;
-
-
-            // Generate OTP
             const otp = generateOTP();
+            const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-
-            // OTP valid for 10 minutes
-            const expiresAt = new Date(
-                Date.now() + 10 * 60 * 1000
-            );
-
-
-            // Store OTP
             await pool.query(
-                `
-      INSERT INTO public.driver_otps
-      (
-        driver_id,
-        otp,
-        expires_at
-      )
-      VALUES
-      (
-        $1,
-        $2,
-        $3
-      )
-      `,
-                [
-                    driver_id,
-                    otp,
-                    expiresAt
-                ]
+                `INSERT INTO public.driver_otps (driver_id, otp, expires_at)
+         VALUES ($1, $2, $3)`,
+                [driver_id, otp, expiresAt]
             );
         }
 
@@ -114,7 +146,8 @@ const loginDriver = async (req, res) => {
                 role: "DRIVER",
                 Driver,
                 accessToken,
-                refreshToken
+                refreshToken,
+                sessionToken
             }
         });
 
@@ -124,16 +157,13 @@ const loginDriver = async (req, res) => {
             success: false,
             message: "Internal Server Error"
         });
-
     }
 };
 
-// const registerDriver = async (req, res) => {
+// const loginDriver = async (req, res) => {
 //     try {
-
 //         // Check Validation Errors
 //         const errors = validationResult(req);
-
 //         if (!errors.isEmpty()) {
 //             return res.status(400).json({
 //                 success: false,
@@ -141,82 +171,113 @@ const loginDriver = async (req, res) => {
 //             });
 //         }
 
-//         const {
-//             full_name,
-//             email,
-//             phone,
-//             password,
-//             profile_image,
-//             license_number,
-//             aadhaar_number,
-//             pan_number
-//         } = req.body;
+
+//         // ✅ Normalize
+//         const email = String(req.body.email || "").trim().toLowerCase();
+//         const password = String(req.body.password || "");
 
 //         // Execute Stored Procedure
 //         const result = await pool.query(
-//             `
-//             CALL public.register_driver(
-//                 $1,  -- full_name
-//                 $2,  -- email
-//                 $3,  -- phone
-//                 $4,  -- password
-//                 $5,  -- profile_image
-//                 $6,  -- license_number
-//                 $7,  -- aadhaar_number
-//                 $8,  -- pan_number
-//                 NULL
-//             )
-//             `,
-//             [
-//                 full_name,
-//                 email,
-//                 phone,
-//                 password,
-//                 profile_image || null,
-//                 license_number,
-//                 aadhaar_number || null,
-//                 pan_number || null
-//             ]
+//             `CALL public.Login_Driver($1, $2, NULL)`,
+//             [email, password]
 //         );
 
-//         // Check Procedure Response
-//         if (
-//             !result.rows ||
-//             result.rows.length === 0
-//         ) {
-//             return res.status(400).json({
+//         if (result.rows.length === 0) {
+//             return res.status(401).json({
 //                 success: false,
-//                 message: "Unable to register driver"
+//                 message: "Invalid email or password"
 //             });
 //         }
 
-//         const response =
-//             result.rows[0].p_response;
+//         const Driver = result.rows[0].p_response;
 
-//         // Procedure Failed
-//         if (!response.success) {
-//             return res.status(400).json({
+//         if (!Driver.success) {
+//             return res.status(401).json({
 //                 success: false,
-//                 message: response.message
+//                 message: Driver.message
 //             });
 //         }
 
-//         // Registration Successful
-//         return res.status(201).json({
+//         // ✅ Fetch driver's vehicle and attach vehicle_id
+//         try {
+//             const vehicleRes = await pool.query(
+//                 `SELECT id, vehicle_type, vehicle_number, vehicle_model, vehicle_color
+//          FROM public.vehicles
+//          WHERE driver_id = $1
+//          LIMIT 1`,
+//                 [Driver.data.driver_id]
+//             );
+
+//             if (vehicleRes.rows.length > 0) {
+//                 Driver.data.vehicle_id = vehicleRes.rows[0].id;
+//                 Driver.data.vehicle = {
+//                     id: vehicleRes.rows[0].id,
+//                     vehicle_type: vehicleRes.rows[0].vehicle_type,
+//                     vehicle_number: vehicleRes.rows[0].vehicle_number,
+//                     vehicle_model: vehicleRes.rows[0].vehicle_model,
+//                     vehicle_color: vehicleRes.rows[0].vehicle_color,
+//                 };
+//             } else {
+//                 Driver.data.vehicle_id = null;
+//                 Driver.data.vehicle = null;
+//             }
+//         } catch (vehicleErr) {
+//             console.log("Vehicle fetch during login failed:", vehicleErr.message);
+//             Driver.data.vehicle_id = null;
+//             Driver.data.vehicle = null;
+//         }
+
+//         // Access Token
+//         const accessToken = jwt.sign(
+//             {
+//                 userId: Driver.data.driver_id,
+//                 fullName: Driver.data.full_name
+//             },
+//             process.env.JWT_ACCESS_SECRET,
+//             { expiresIn: "15m" }
+//         );
+
+//         // Refresh Token
+//         const refreshToken = jwt.sign(
+//             { userId: Driver.data.driver_id },
+//             process.env.JWT_REFRESH_SECRET,
+//             { expiresIn: "7d" }
+//         );
+
+//         if (Driver.data.verification_status === 'PENDING') {
+//             const driver_id = Driver.data.driver_id;
+
+//             const otp = generateOTP();
+
+//             const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+//             await pool.query(
+//                 `
+//         INSERT INTO public.driver_otps
+//         (driver_id, otp, expires_at)
+//         VALUES ($1, $2, $3)
+//         `,
+//                 [driver_id, otp, expiresAt]
+//             );
+//         }
+
+//         return res.status(200).json({
 //             success: true,
-//             message: response.message,
-//             data: response.data
+//             message: "Login successful",
+//             data: {
+//                 role: "DRIVER",
+//                 Driver,
+//                 accessToken,
+//                 refreshToken
+//             }
 //         });
 
 //     } catch (error) {
-
-//         console.error("Register Driver Error:", error);
-
+//         console.error(error);
 //         return res.status(500).json({
 //             success: false,
 //             message: "Internal Server Error"
 //         });
-
 //     }
 // };
 
@@ -528,6 +589,75 @@ const acceptRide = async (req, res) => {
     }
 };
 
+// const startRide = async (req, res) => {
+//     try {
+//         const errors = validationResult(req);
+//         if (!errors.isEmpty()) {
+//             return res.status(400).json({
+//                 success: false,
+//                 errors: errors.array()
+//             });
+//         }
+
+//         const { ride_id } = req.body;
+//         const result = await pool.query(
+//             `
+//       CALL public.start_ride(
+//         $1,
+//         NULL
+//       )
+//       `,
+//             [ride_id]
+//         );
+
+//         if (
+//             !result.rows ||
+//             result.rows.length === 0
+//         ) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: "Unable to start ride"
+//             });
+//         }
+
+//         const response = result.rows[0].p_response;
+
+//         if (!response.success) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: response.message
+//             });
+//         }
+
+//         emitRideStarted(
+//             response.data.user_id,
+//             response.data
+//         );
+
+
+//         return res.status(200).json({
+//             success: true,
+//             message: response.message,
+//             data: {
+//                 ride_id: response.data.ride_id,
+//                 ride_status: response.data.ride_status,
+//                 started_at: response.data.started_at
+//             }
+//         });
+
+
+//     } catch (error) {
+
+//         console.error(error);
+
+//         return res.status(500).json({
+//             success: false,
+//             message: error.message
+//         });
+
+//     }
+// };
+
 const startRide = async (req, res) => {
     try {
         const errors = validationResult(req);
@@ -538,21 +668,61 @@ const startRide = async (req, res) => {
             });
         }
 
-        const { ride_id } = req.body;
-        const result = await pool.query(
-            `
-      CALL public.start_ride(
-        $1,
-        NULL
-      )
-      `,
+        const { ride_id, otp } = req.body;
+        const driver_id = req.user.userId;
+
+        // =====================================================
+        // 1. Fetch ride + verify ownership + OTP
+        // =====================================================
+        const rideRes = await pool.query(
+            `SELECT id, user_id, driver_id, ride_status, ride_otp
+       FROM public.rides
+       WHERE id = $1`,
             [ride_id]
         );
 
-        if (
-            !result.rows ||
-            result.rows.length === 0
-        ) {
+        if (rideRes.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Ride not found"
+            });
+        }
+
+        const ride = rideRes.rows[0];
+
+        // Ride must be assigned to this driver
+        if (ride.driver_id !== driver_id) {
+            return res.status(403).json({
+                success: false,
+                message: "This ride is not assigned to you"
+            });
+        }
+
+        // Ride must be in ARRIVED state
+        if (ride.ride_status !== "ARRIVED") {
+            return res.status(400).json({
+                success: false,
+                message: `Cannot start ride. Current status is ${ride.ride_status}`
+            });
+        }
+
+        // OTP must match
+        if (!otp || String(ride.ride_otp) !== String(otp).trim()) {
+            return res.status(400).json({
+                success: false,
+                message: "Incorrect OTP. Please check with the customer."
+            });
+        }
+
+        // =====================================================
+        // 2. Call the SP to actually start the ride
+        // =====================================================
+        const result = await pool.query(
+            `CALL public.start_ride($1, NULL)`,
+            [ride_id]
+        );
+
+        if (!result.rows || result.rows.length === 0) {
             return res.status(400).json({
                 success: false,
                 message: "Unable to start ride"
@@ -568,11 +738,13 @@ const startRide = async (req, res) => {
             });
         }
 
+        // =====================================================
+        // 3. Emit socket event to customer
+        // =====================================================
         emitRideStarted(
             response.data.user_id,
             response.data
         );
-
 
         return res.status(200).json({
             success: true,
@@ -584,22 +756,84 @@ const startRide = async (req, res) => {
             }
         });
 
-
     } catch (error) {
-
         console.error(error);
-
         return res.status(500).json({
             success: false,
             message: error.message
         });
-
     }
 };
 
+// const completeRide = async (req, res) => {
+//     try {
+
+//         const errors = validationResult(req);
+
+//         if (!errors.isEmpty()) {
+//             return res.status(400).json({
+//                 success: false,
+//                 errors: errors.array()
+//             });
+//         }
+
+//         const { ride_id } = req.body;
+
+//         const result = await pool.query(
+//             `
+//       CALL public.complete_ride(
+//         $1,
+//         NULL
+//       )
+//       `,
+//             [ride_id]
+//         );
+
+//         if (
+//             !result.rows ||
+//             result.rows.length === 0
+//         ) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: "Unable to complete ride"
+//             });
+//         }
+
+//         const response = result.rows[0].p_response;
+
+//         if (!response.success) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: response.message
+//             });
+//         }
+
+//         emitRideCompleted(
+//             response.data.user_id,
+//             response.data
+//         );
+
+//         return res.status(200).json({
+//             success: true,
+//             message: response.message,
+//             data: response.data
+//         });
+
+
+//     } catch (error) {
+
+//         console.error(error);
+
+//         return res.status(500).json({
+//             success: false,
+//             message: error.message
+//         });
+
+//     }
+// };
+
 const completeRide = async (req, res) => {
     try {
-
         const errors = validationResult(req);
 
         if (!errors.isEmpty()) {
@@ -611,20 +845,15 @@ const completeRide = async (req, res) => {
 
         const { ride_id } = req.body;
 
+        // =====================================================
+        // 1. Call SP to complete the ride
+        // =====================================================
         const result = await pool.query(
-            `
-      CALL public.complete_ride(
-        $1,
-        NULL
-      )
-      `,
+            `CALL public.complete_ride($1, NULL)`,
             [ride_id]
         );
 
-        if (
-            !result.rows ||
-            result.rows.length === 0
-        ) {
+        if (!result.rows || result.rows.length === 0) {
             return res.status(400).json({
                 success: false,
                 message: "Unable to complete ride"
@@ -640,27 +869,114 @@ const completeRide = async (req, res) => {
             });
         }
 
+        // =====================================================
+        // 2. ✅ If Wallet ride → debit now (inside this handler)
+        // =====================================================
+        const rideRes = await pool.query(
+            `SELECT id, user_id, driver_id, final_amount, payment_method, payment_status
+             FROM public.rides
+             WHERE id = $1`,
+            [ride_id]
+        );
+
+        const ride = rideRes.rows[0];
+
+        if (ride && ride.payment_method === "Wallet" && ride.payment_status !== "PAID") {
+            const client = await pool.connect();
+            try {
+                await client.query("BEGIN");
+
+                // Lock user row
+                const userRes = await client.query(
+                    `SELECT wallet_balance FROM public.users WHERE id = $1 FOR UPDATE`,
+                    [ride.user_id]
+                );
+
+                const balance = Number(userRes.rows[0]?.wallet_balance || 0);
+                const fare = Number(ride.final_amount);
+
+                if (balance >= fare) {
+                    const newBalance = balance - fare;
+
+                    // Debit transaction
+                    await client.query(
+                        `INSERT INTO public.wallet_transactions
+                           (user_id, type, amount, description, created_at)
+                         VALUES ($1, 'DEBIT', $2, $3, CURRENT_TIMESTAMP)`,
+                        [ride.user_id, fare, `Ride #${ride.id} payment`]
+                    );
+
+                    // Update balance
+                    await client.query(
+                        `UPDATE public.users SET wallet_balance = $1 WHERE id = $2`,
+                        [newBalance, ride.user_id]
+                    );
+
+                    // Mark ride paid
+                    await client.query(
+                        `UPDATE public.rides
+                         SET payment_status = 'PAID', updated_at = NOW()
+                         WHERE id = $1`,
+                        [ride.id]
+                    );
+
+                    // Log in payments table
+                    await client.query(
+                        `INSERT INTO public.payments
+                           (ride_id, user_id, amount, currency,
+                            payment_gateway, payment_method,
+                            payment_status, paid_at, updated_at)
+                         VALUES ($1, $2, $3, 'INR', NULL, 'WALLET', 'CAPTURED', NOW(), NOW())`,
+                        [ride.id, ride.user_id, fare]
+                    );
+
+                    ride.payment_status = "PAID";
+                    console.log(`✅ Wallet debited ₹${fare} for ride ${ride.id}`);
+                } else {
+                    // Insufficient — leave PENDING
+                    console.log(
+                        `⚠️ Wallet insufficient for ride ${ride.id}: need ₹${fare}, have ₹${balance}`
+                    );
+                }
+
+                await client.query("COMMIT");
+            } catch (walletErr) {
+                await client.query("ROLLBACK").catch(() => { });
+                console.error("Wallet debit error:", walletErr);
+                // Don't fail the whole request — ride is completed
+            } finally {
+                client.release();
+            }
+        }
+
+        // =====================================================
+        // 3. Emit ride_completed (as before) — with payment_status included
+        // =====================================================
         emitRideCompleted(
             response.data.user_id,
-            response.data
+            {
+                ...response.data,
+                payment_status: ride?.payment_status || response.data.payment_status || "PENDING",
+                payment_method: ride?.payment_method || response.data.payment_method,
+            }
         );
 
         return res.status(200).json({
             success: true,
             message: response.message,
-            data: response.data
+            data: {
+                ...response.data,
+                payment_status: ride?.payment_status || response.data.payment_status || "PENDING",
+                payment_method: ride?.payment_method || response.data.payment_method,
+            },
         });
 
-
     } catch (error) {
-
         console.error(error);
-
         return res.status(500).json({
             success: false,
             message: error.message
         });
-
     }
 };
 
@@ -853,6 +1169,20 @@ const verifyDriverOTP = async (req, res) => {
             });
         }
 
+        // ✅ NEW: session token for OTP-login path too
+        const sessionToken = crypto.randomUUID();
+        const deviceLabel = String(req.headers["x-device-label"] || "").slice(0, 200) || null;
+
+        await pool.query(
+            `UPDATE public.drivers
+               SET session_token = $1,
+                   session_device = $2,
+                   session_updated_at = CURRENT_TIMESTAMP
+             WHERE id = $3`,
+            [sessionToken, deviceLabel, response.data.driver_id]
+        );
+
+
         // // Access Token
         const accessToken = jwt.sign(
             {
@@ -882,7 +1212,8 @@ const verifyDriverOTP = async (req, res) => {
                 role: "DRIVER",
                 response,
                 accessToken,
-                refreshToken
+                refreshToken,
+                sessionToken
             }
         });
 
@@ -990,30 +1321,157 @@ const uploadDriverDocument = async (req, res) => {
     }
 };
 
+// const getDriverDocumentStatus = async (req, res) => {
+//     try {
+//         const driverId = req.user.userId;
+
+//         const query = `
+//             SELECT
+//                 driver_id,
+//                 driver_photo,
+//                 driving_license,
+//                 address_proof,
+//                 pan_card,
+//                 epic_card,
+//                 vehicle_rc,
+//                 vehicle_fitness_certificate,
+//                 taxi_permit,
+//                 verification_status
+//             FROM public.driver_documents
+//             WHERE driver_id = $1
+//         `;
+
+//         const result = await pool.query(query, [driverId]);
+//         // Driver has never uploaded any document
+//         if (result.rows.length === 0) {
+
+//             return res.status(200).json({
+//                 success: true,
+//                 documentsUploaded: false,
+//                 allDocumentsUploaded: false,
+//                 message: "Please upload your documents.",
+//                 data: {
+//                     driver_id: driverId,
+//                     uploaded: [],
+//                     missing: [
+//                         "DRIVER_PHOTO",
+//                         "DRIVING_LICENSE",
+//                         "ADDRESS_PROOF",
+//                         "PAN_CARD",
+//                         "EPIC_CARD",
+//                         "VEHICLE_RC",
+//                         "VEHICLE_FITNESS_CERTIFICATE",
+//                         "TAXI_PERMIT"
+//                     ]
+//                 }
+//             });
+//         }
+
+//         const documents = result.rows[0];
+
+//         const documentMap = {
+//             DRIVER_PHOTO: documents.driver_photo,
+//             DRIVING_LICENSE: documents.driving_license,
+//             ADDRESS_PROOF: documents.address_proof,
+//             PAN_CARD: documents.pan_card,
+//             EPIC_CARD: documents.epic_card,
+//             VEHICLE_RC: documents.vehicle_rc,
+//             VEHICLE_FITNESS_CERTIFICATE:
+//                 documents.vehicle_fitness_certificate,
+//             TAXI_PERMIT: documents.taxi_permit
+//         };
+
+//         const uploaded = [];
+//         const missing = [];
+
+//         Object.entries(documentMap).forEach(([type, file]) => {
+//             if (
+//                 file !== null &&
+//                 file !== undefined &&
+//                 file !== ""
+//             ) {
+//                 uploaded.push(type);
+//             } else {
+//                 missing.push(type);
+//             }
+//         });
+
+
+//         return res.status(200).json({
+//             success: true,
+
+//             // At least one document is uploaded
+//             documentsUploaded: uploaded.length > 0,
+
+//             // Every required document is uploaded
+//             allDocumentsUploaded: missing.length === 0,
+
+//             message:
+//                 missing.length === 0
+//                     ? "All documents uploaded."
+//                     : "Please upload the remaining documents.",
+
+//             data: {
+//                 driver_id: driverId,
+//                 uploaded,
+//                 missing,
+//                 verification_status:
+//                     documents.verification_status
+//             }
+//         });
+
+//     } catch (error) {
+//         console.error(
+//             "❌ Get Driver Document Status Error:",
+//             error
+//         );
+
+//         return res.status(500).json({
+//             success: false,
+//             message: "Failed to check document status"
+//         });
+//     }
+// };
+
+
 const getDriverDocumentStatus = async (req, res) => {
     try {
         const driverId = req.user.userId;
 
         const query = `
-            SELECT
-                driver_id,
-                driver_photo,
-                driving_license,
-                address_proof,
-                pan_card,
-                epic_card,
-                vehicle_rc,
-                vehicle_fitness_certificate,
-                taxi_permit,
-                verification_status
-            FROM public.driver_documents
-            WHERE driver_id = $1
-        `;
+      SELECT
+        driver_id,
+        driver_photo,
+        driving_license,
+        address_proof,
+        pan_card,
+        epic_card,
+        vehicle_rc,
+        vehicle_fitness_certificate,
+        taxi_permit,
+        verification_status
+      FROM public.driver_documents
+      WHERE driver_id = $1
+    `;
 
         const result = await pool.query(query, [driverId]);
+
+        // ✅ Required documents (EPIC_CARD removed)
+        const requiredDocs = [
+            "DRIVER_PHOTO",
+            "DRIVING_LICENSE",
+            "ADDRESS_PROOF",
+            "PAN_CARD",
+            "VEHICLE_RC",
+            "VEHICLE_FITNESS_CERTIFICATE",
+            "TAXI_PERMIT",
+        ];
+
+        // ✅ Optional documents (tracked but not required)
+        const optionalDocs = ["EPIC_CARD"];
+
         // Driver has never uploaded any document
         if (result.rows.length === 0) {
-
             return res.status(200).json({
                 success: true,
                 documentsUploaded: false,
@@ -1022,49 +1480,50 @@ const getDriverDocumentStatus = async (req, res) => {
                 data: {
                     driver_id: driverId,
                     uploaded: [],
-                    missing: [
-                        "DRIVER_PHOTO",
-                        "DRIVING_LICENSE",
-                        "ADDRESS_PROOF",
-                        "PAN_CARD",
-                        "EPIC_CARD",
-                        "VEHICLE_RC",
-                        "VEHICLE_FITNESS_CERTIFICATE",
-                        "TAXI_PERMIT"
-                    ]
-                }
+                    missing: [...requiredDocs],
+                    optional_missing: [...optionalDocs],
+                    required: requiredDocs,
+                    optional: optionalDocs,
+                },
             });
         }
 
         const documents = result.rows[0];
 
-        const documentMap = {
+        // EPIC_CARD is optional
+        const requiredDocumentMap = {
             DRIVER_PHOTO: documents.driver_photo,
             DRIVING_LICENSE: documents.driving_license,
             ADDRESS_PROOF: documents.address_proof,
             PAN_CARD: documents.pan_card,
-            EPIC_CARD: documents.epic_card,
             VEHICLE_RC: documents.vehicle_rc,
-            VEHICLE_FITNESS_CERTIFICATE:
-                documents.vehicle_fitness_certificate,
-            TAXI_PERMIT: documents.taxi_permit
+            VEHICLE_FITNESS_CERTIFICATE: documents.vehicle_fitness_certificate,
+            TAXI_PERMIT: documents.taxi_permit,
         };
 
         const uploaded = [];
-        const missing = [];
+        const missing = [];        // required but missing
+        const optionalMissing = []; // optional but missing
 
-        Object.entries(documentMap).forEach(([type, file]) => {
-            if (
-                file !== null &&
-                file !== undefined &&
-                file !== ""
-            ) {
+        // Check required
+        requiredDocs.forEach((type) => {
+            const file = requiredDocumentMap[type];
+            if (file !== null && file !== undefined && file !== "") {
                 uploaded.push(type);
             } else {
                 missing.push(type);
             }
         });
 
+        // Check optional — mark as uploaded if present, but don't fail if missing
+        optionalDocs.forEach((type) => {
+            const file = requiredDocumentMap[type];
+            if (file !== null && file !== undefined && file !== "") {
+                uploaded.push(type);
+            } else {
+                optionalMissing.push(type);
+            }
+        });
 
         return res.status(200).json({
             success: true,
@@ -1072,32 +1531,29 @@ const getDriverDocumentStatus = async (req, res) => {
             // At least one document is uploaded
             documentsUploaded: uploaded.length > 0,
 
-            // Every required document is uploaded
+            // ✅ Every REQUIRED document is uploaded (EPIC card ignored)
             allDocumentsUploaded: missing.length === 0,
 
             message:
                 missing.length === 0
-                    ? "All documents uploaded."
+                    ? "All required documents uploaded."
                     : "Please upload the remaining documents.",
 
             data: {
                 driver_id: driverId,
                 uploaded,
                 missing,
-                verification_status:
-                    documents.verification_status
-            }
+                optional_missing: optionalMissing,
+                required: requiredDocs,
+                optional: optionalDocs,
+                verification_status: documents.verification_status,
+            },
         });
-
     } catch (error) {
-        console.error(
-            "❌ Get Driver Document Status Error:",
-            error
-        );
-
+        console.error("❌ Get Driver Document Status Error:", error);
         return res.status(500).json({
             success: false,
-            message: "Failed to check document status"
+            message: "Failed to check document status",
         });
     }
 };
@@ -1345,6 +1801,914 @@ const getBankDetails = async (req, res) => {
     }
 };
 
+// const toggleOnline = async (req, res) => {
+//     try {
+//         const driver_id = req.user.userId;
+//         const { is_online } = req.body;
+
+//         if (typeof is_online !== "boolean") {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: "is_online must be a boolean",
+//             });
+//         }
+
+//         const result = await pool.query(
+//             `UPDATE public.drivers
+//        SET is_online = $1, updated_at = CURRENT_TIMESTAMP
+//        WHERE id = $2
+//        RETURNING id, is_online`,
+//             [is_online, driver_id]
+//         );
+
+//         if (result.rows.length === 0) {
+//             return res.status(404).json({
+//                 success: false,
+//                 message: "Driver not found",
+//             });
+//         }
+
+//         return res.status(200).json({
+//             success: true,
+//             message: is_online ? "You are now online" : "You are now offline",
+//             data: result.rows[0],
+//         });
+//     } catch (error) {
+//         console.error("Toggle Online Error:", error);
+//         return res.status(500).json({
+//             success: false,
+//             message: error.message,
+//         });
+//     }
+// };
+
+const toggleOnline = async (req, res) => {
+    try {
+        const driver_id = req.user.userId;
+        const { is_online } = req.body;
+
+        if (typeof is_online !== "boolean") {
+            return res.status(400).json({
+                success: false,
+                message: "is_online must be a boolean",
+            });
+        }
+
+        // ✅ Only block going ONLINE — allow going offline anytime
+        if (is_online === true) {
+            // 1. Documents
+            const docCheck = await pool.query(
+                `SELECT
+           driver_photo, driving_license, address_proof, pan_card,
+           epic_card, vehicle_rc, vehicle_fitness_certificate, taxi_permit,
+           verification_status
+         FROM public.driver_documents
+         WHERE driver_id = $1`,
+                [driver_id]
+            );
+
+            const requiredDocs = [
+                "driver_photo",
+                "driving_license",
+                "address_proof",
+                "pan_card",
+                // "epic_card",
+                "vehicle_rc",
+                "vehicle_fitness_certificate",
+                "taxi_permit",
+            ];
+
+            if (docCheck.rows.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Please upload all required documents before going online.",
+                    field: "documents",
+                });
+            }
+
+            const docs = docCheck.rows[0];
+            const missingDocs = requiredDocs.filter((k) => !docs[k]);
+
+            if (missingDocs.length > 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Please upload all documents. ${missingDocs.length} still missing.`,
+                    field: "documents",
+                });
+            }
+
+            if (docs.verification_status !== "APPROVED") {
+                return res.status(400).json({
+                    success: false,
+                    message:
+                        "Your documents are pending verification. You'll be notified once approved.",
+                    field: "documents",
+                    verification_status: docs.verification_status,
+                });
+            }
+
+            // 2. Vehicle
+            const vehicleCheck = await pool.query(
+                `SELECT id, is_verified FROM public.vehicles
+         WHERE driver_id = $1 LIMIT 1`,
+                [driver_id]
+            );
+
+            if (vehicleCheck.rows.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Please add your vehicle details before going online.",
+                    field: "vehicle",
+                });
+            }
+
+            if (vehicleCheck.rows[0].is_verified !== true) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Your vehicle is pending verification.",
+                    field: "vehicle",
+                });
+            }
+
+            // 3. Bank
+            const bankCheck = await pool.query(
+                `SELECT id, verification_status FROM public.driver_bank_details
+         WHERE driver_id = $1 LIMIT 1`,
+                [driver_id]
+            );
+
+            if (bankCheck.rows.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Please add your bank details before going online.",
+                    field: "bank",
+                });
+            }
+
+            if (bankCheck.rows[0].verification_status !== "APPROVED") {
+                return res.status(400).json({
+                    success: false,
+                    message: "Your bank details are pending verification.",
+                    field: "bank",
+                });
+            }
+        }
+
+        // ✅ All checks passed — proceed
+        const result = await pool.query(
+            `UPDATE public.drivers
+       SET is_online = $1,
+           is_available = $1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2
+       RETURNING id, is_online, is_available`,
+            [is_online, driver_id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, message: "Driver not found" });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: is_online ? "You are now online" : "You are now offline",
+            data: result.rows[0],
+        });
+    } catch (error) {
+        console.error("Toggle Online Error:", error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const getDriverStatus = async (req, res) => {
+    try {
+        const driver_id = req.user.userId;
+
+        const result = await pool.query(
+            `SELECT id, full_name, is_online, is_available, is_blocked,
+              rating, total_rides, current_latitude, current_longitude
+       FROM public.drivers
+       WHERE id = $1`,
+            [driver_id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, message: "Driver not found" });
+        }
+
+        return res.status(200).json({ success: true, data: result.rows[0] });
+    } catch (error) {
+        console.error("Get Driver Status Error:", error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// GET /driver/current_ride
+const getCurrentRide = async (req, res) => {
+    try {
+        const driver_id = req.user.userId;
+
+        const result = await pool.query(
+            `CALL public.get_current_ride_for_driver($1, NULL)`,
+            [driver_id]
+        );
+
+        if (!result.rows || result.rows.length === 0) {
+            return res.status(400).json({ success: false, message: "Unable to fetch ride" });
+        }
+
+        const response = result.rows[0].p_response;
+
+        if (!response.success) {
+            return res.status(400).json({ success: false, message: response.message });
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: response.data,
+            message: response.message,
+        });
+    } catch (error) {
+        console.error("Get Current Ride Error:", error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// POST /driver/arrived_at_pickup
+const markArrived = async (req, res) => {
+    try {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({ success: false, errors: errors.array() });
+        }
+
+        const { ride_id } = req.body;
+        const driver_id = req.user.userId;
+
+        const result = await pool.query(
+            `CALL public.arrived_at_pickup($1, $2, NULL)`,
+            [ride_id, driver_id]
+        );
+
+        if (!result.rows || result.rows.length === 0) {
+            return res.status(400).json({ success: false, message: "Unable to mark arrived" });
+        }
+
+        const response = result.rows[0].p_response;
+
+        if (!response.success) {
+            return res.status(400).json({ success: false, message: response.message });
+        }
+
+        // ✅ Notify customer
+        emitDriverArrived(response.data.user_id, {
+            ride_id: response.data.ride_id,
+            driver_id: response.data.driver_id,
+            ride_status: "ARRIVED",
+            arrived_at: response.data.arrived_at,
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: response.message,
+            data: response.data,
+        });
+    } catch (error) {
+        console.error("Mark Arrived Error:", error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// const payForRide = async (req, res) => {
+//   try {
+//     const userId = req.user.userId;
+//     const { id } = req.params;
+//     const { payment_method } = req.body;  // optional: "CASH" | "WALLET" | "UPI" | "CARD"
+
+//     // 1. Fetch ride + verify ownership + must be COMPLETED
+//     const rideRes = await pool.query(
+//       `SELECT id, ride_status, payment_status, payment_method, final_amount
+//        FROM public.rides
+//        WHERE id = $1 AND user_id = $2
+//        LIMIT 1`,
+//       [id, userId]
+//     );
+
+//     if (rideRes.rows.length === 0) {
+//       return res.status(404).json({ success: false, message: "Ride not found" });
+//     }
+
+//     const ride = rideRes.rows[0];
+
+//     if (ride.ride_status !== "COMPLETED") {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Ride is not completed yet",
+//       });
+//     }
+
+//     if (ride.payment_status === "PAID" || ride.payment_status === "COMPLETED") {
+//       return res.status(400).json({
+//         success: false,
+//         message: "This ride has already been paid for",
+//       });
+//     }
+
+//     // 2. Mark as paid
+//     const updateRes = await pool.query(
+//       `UPDATE public.rides
+//        SET
+//          payment_status = 'PAID',
+//          payment_method = COALESCE($1, payment_method),
+//          updated_at = CURRENT_TIMESTAMP
+//        WHERE id = $2 AND user_id = $3
+//        RETURNING id, ride_status, payment_status, payment_method, final_amount`,
+//       [payment_method || null, id, userId]
+//     );
+
+//     // 3. Notify driver (optional but nice)
+//     const driverRes = await pool.query(
+//       `SELECT driver_id FROM public.rides WHERE id = $1`,
+//       [id]
+//     );
+
+//     if (driverRes.rows[0]?.driver_id) {
+//       try {
+//         const { emitRidePaid } = require("../../sockets/RideSocket/ride.socket.js");
+//         emitRidePaid(driverRes.rows[0].driver_id, {
+//           ride_id: Number(id),
+//           payment_status: "PAID",
+//           final_amount: ride.final_amount,
+//         });
+//       } catch (emitErr) {
+//         console.log("Emit ride_paid error:", emitErr.message);
+//       }
+//     }
+
+//     return res.status(200).json({
+//       success: true,
+//       message: "Payment successful",
+//       data: updateRes.rows[0],
+//     });
+//   } catch (error) {
+//     console.error("Pay Ride Error:", error);
+//     return res.status(500).json({ success: false, message: error.message });
+//   }
+// };
+
+const markRidePaid = async (req, res) => {
+    try {
+        const driver_id = req.user.userId;
+        const { id } = req.params;
+        const { payment_method } = req.body; // optional
+
+        // 1. Verify ride belongs to this driver + is COMPLETED
+        const rideRes = await pool.query(
+            `SELECT id, user_id, driver_id, ride_status, payment_status, final_amount, payment_method
+       FROM public.rides
+       WHERE id = $1 AND driver_id = $2
+       LIMIT 1`,
+            [id, driver_id]
+        );
+
+        if (rideRes.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Ride not found or not assigned to you",
+            });
+        }
+
+        const ride = rideRes.rows[0];
+
+        if (ride.ride_status !== "COMPLETED") {
+            return res.status(400).json({
+                success: false,
+                message: "Ride is not completed yet",
+            });
+        }
+
+        if (ride.payment_status === "PAID") {
+            return res.status(400).json({
+                success: false,
+                message: "This ride is already marked as paid",
+            });
+        }
+
+        // 2. Mark paid
+        const updateRes = await pool.query(
+            `UPDATE public.rides
+       SET
+         payment_status = 'PAID',
+         payment_method = COALESCE($1, payment_method),
+         updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2
+       RETURNING id, ride_status, payment_status, payment_method, final_amount`,
+            [payment_method || null, id]
+        );
+
+        // 3. Notify customer via socket
+        try {
+            const { emitRidePaid } = require("../../sockets/RideSocket/ride.socket.js");
+
+            // emit to customer (userId)
+            emitRidePaid(ride.user_id, {
+                ride_id: Number(id),
+                payment_status: "PAID",
+                final_amount: ride.final_amount,
+            }, "USER");
+        } catch (emitErr) {
+            console.log("Emit ride_paid error:", emitErr.message);
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "Payment marked as received",
+            data: updateRes.rows[0],
+        });
+    } catch (error) {
+        console.error("Mark Ride Paid Error:", error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const reportPaymentIssue = async (req, res) => {
+    try {
+        const driver_id = req.user.userId;
+        const { id } = req.params;
+        const { reason, note } = req.body;
+
+        const validReasons = [
+            "CUSTOMER_DIDNT_PAY",
+            "CUSTOMER_PAID_LESS",
+            "CUSTOMER_LEFT_WITHOUT_PAYING",
+            "PAYMENT_APP_ISSUE",
+            "OTHER",
+        ];
+
+        if (!reason || !validReasons.includes(reason)) {
+            return res.status(400).json({
+                success: false,
+                message: "Valid reason is required",
+            });
+        }
+
+        // Verify ride belongs to driver + completed
+        const rideRes = await pool.query(
+            `SELECT id, user_id, driver_id, ride_status, payment_status, final_amount
+       FROM public.rides
+       WHERE id = $1 AND driver_id = $2
+       LIMIT 1`,
+            [id, driver_id]
+        );
+
+        if (rideRes.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Ride not found or not assigned to you",
+            });
+        }
+
+        const ride = rideRes.rows[0];
+
+        if (ride.ride_status !== "COMPLETED") {
+            return res.status(400).json({
+                success: false,
+                message: "Ride is not completed",
+            });
+        }
+
+        if (ride.payment_status === "PAID") {
+            return res.status(400).json({
+                success: false,
+                message: "Ride is already paid",
+            });
+        }
+
+        // Update payment status to FAILED with reason
+        const updateRes = await pool.query(
+            `UPDATE public.rides
+       SET
+         payment_status = 'FAILED',
+         payment_failure_reason = $1,
+         payment_failure_note = $2,
+         updated_at = CURRENT_TIMESTAMP
+       WHERE id = $3
+       RETURNING id, ride_status, payment_status, final_amount`,
+            [reason, note || null, id]
+        );
+
+        // Optional: notify admin via a notification row or socket
+        // Optional: emit to customer (rare) — skip for now
+
+        return res.status(200).json({
+            success: true,
+            message: "Payment issue reported",
+            data: updateRes.rows[0],
+        });
+    } catch (error) {
+        console.error("Report Payment Issue Error:", error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const getDriverRides = async (req, res) => {
+    try {
+        const driver_id = req.user.userId;
+
+        const result = await pool.query(
+            `CALL public.get_driver_rides($1, NULL)`,
+            [driver_id]
+        );
+
+        if (!result.rows || result.rows.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: "Unable to fetch rides",
+            });
+        }
+
+        const response = result.rows[0].p_response;
+
+        if (!response.success) {
+            return res.status(400).json({
+                success: false,
+                message: response.message,
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: response,
+        });
+    } catch (error) {
+        console.error("Get Driver Rides Error:", error);
+        return res.status(500).json({
+            success: false,
+            message: error.message,
+        });
+    }
+};
+
+const getDriverWallet = async (req, res) => {
+    try {
+        const driver_id = req.user.userId;
+
+        const result = await pool.query(
+            `CALL public.get_driver_wallet($1, NULL)`,
+            [driver_id]
+        );
+
+        if (!result.rows || result.rows.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: "Unable to fetch wallet",
+            });
+        }
+
+        const response = result.rows[0].p_response;
+
+        if (!response.success) {
+            return res.status(400).json({
+                success: false,
+                message: response.message,
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: response.data,
+        });
+    } catch (error) {
+        console.error("Get Driver Wallet Error:", error);
+        return res.status(500).json({
+            success: false,
+            message: error.message,
+        });
+    }
+};
+
+const getDriverNotifications = async (req, res) => {
+    try {
+        const driver_id = req.user.userId;
+
+        const limit = Math.min(Number(req.query.limit) || 50, 100);
+        const offset = Math.max(Number(req.query.offset) || 0, 0);
+        const unreadOnly = req.query.unreadOnly === "true";
+
+        const whereClause = unreadOnly
+            ? "WHERE driver_id = $1 AND is_read = false"
+            : "WHERE driver_id = $1";
+
+        const result = await pool.query(
+            `SELECT id, title, message, type, is_read, created_at
+       FROM public.driver_notifications
+       ${whereClause}
+       ORDER BY created_at DESC
+       LIMIT $2 OFFSET $3`,
+            [driver_id, limit, offset]
+        );
+
+        const unreadRes = await pool.query(
+            `SELECT COUNT(*)::int AS count
+       FROM public.driver_notifications
+       WHERE driver_id = $1 AND is_read = false`,
+            [driver_id]
+        );
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                notifications: result.rows,
+                unreadCount: unreadRes.rows[0].count,
+            },
+        });
+    } catch (error) {
+        console.error("Get Driver Notifications Error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Failed to fetch notifications",
+        });
+    }
+};
+
+// ============================================================
+// POST /driver/notifications/:id/read
+// ============================================================
+const markDriverNotificationRead = async (req, res) => {
+    try {
+        const driver_id = req.user.userId;
+        const { id } = req.params;
+
+        const result = await pool.query(
+            `UPDATE public.driver_notifications
+       SET is_read = true
+       WHERE id = $1 AND driver_id = $2
+       RETURNING id, is_read`,
+            [id, driver_id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Notification not found",
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "Marked as read",
+            data: result.rows[0],
+        });
+    } catch (error) {
+        console.error("Mark Driver Notif Read Error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Failed to mark as read",
+        });
+    }
+};
+
+// ============================================================
+// POST /driver/notifications/read_all
+// ============================================================
+const markAllDriverNotificationsRead = async (req, res) => {
+    try {
+        const driver_id = req.user.userId;
+
+        const result = await pool.query(
+            `UPDATE public.driver_notifications
+       SET is_read = true
+       WHERE driver_id = $1 AND is_read = false`,
+            [driver_id]
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: "All marked as read",
+            data: { updated: result.rowCount },
+        });
+    } catch (error) {
+        console.error("Mark All Driver Notif Read Error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Failed to mark all as read",
+        });
+    }
+};
+
+// ============================================================
+// Internal helper — create a driver notification
+// Call from other controllers when something happens
+// ============================================================
+const createDriverNotification = async (client, driverId, { title, message, type }) => {
+    try {
+        const result = await client.query(
+            `INSERT INTO public.driver_notifications
+         (driver_id, title, message, type, is_read, created_at)
+       VALUES ($1, $2, $3, $4, false, CURRENT_TIMESTAMP)
+       RETURNING *`,
+            [driverId, title, message, type]
+        );
+        return result.rows[0];
+    } catch (error) {
+        console.error("Create Driver Notification Error:", error);
+        return null;
+    }
+};
+
+const getOnboardingStatus = async (req, res) => {
+    try {
+        const driver_id = req.user.userId;
+
+        // ---------- DOCUMENTS ----------
+        const docRes = await pool.query(
+            `SELECT
+         driver_photo, driving_license, address_proof, pan_card, epic_card,
+         vehicle_rc, vehicle_fitness_certificate, taxi_permit,
+         verification_status
+       FROM public.driver_documents
+       WHERE driver_id = $1`,
+            [driver_id]
+        );
+
+        const requiredDocs = [
+            "driver_photo",
+            "driving_license",
+            "address_proof",
+            "pan_card",
+            //   "epic_card",
+            "vehicle_rc",
+            "vehicle_fitness_certificate",
+            "taxi_permit",
+        ];
+
+        let documentsSubmitted = false;
+        let documentsPending = [...requiredDocs];
+        let documentVerificationStatus = null;
+
+        if (docRes.rows.length > 0) {
+            const doc = docRes.rows[0];
+            documentVerificationStatus = doc.verification_status;
+            documentsPending = requiredDocs.filter((k) => !doc[k]);
+            documentsSubmitted = documentsPending.length === 0;
+        }
+
+        const documentsApproved =
+            documentsSubmitted && documentVerificationStatus === "APPROVED";
+
+        // ---------- VEHICLE ----------
+        const vehicleRes = await pool.query(
+            `SELECT id, vehicle_type, vehicle_number, vehicle_model, vehicle_color,
+              is_verified
+       FROM public.vehicles
+       WHERE driver_id = $1
+       LIMIT 1`,
+            [driver_id]
+        );
+
+        const vehicleSubmitted = vehicleRes.rows.length > 0;
+        const vehicle = vehicleSubmitted ? vehicleRes.rows[0] : null;
+        const vehicleApproved = vehicleSubmitted && vehicle?.is_verified === true;
+
+        // ---------- BANK ----------
+        const bankRes = await pool.query(
+            `SELECT id, account_holder_name, bank_name, account_number, ifsc_code,
+              verification_status
+       FROM public.driver_bank_details
+       WHERE driver_id = $1
+       LIMIT 1`,
+            [driver_id]
+        );
+
+        const bankSubmitted = bankRes.rows.length > 0;
+        const bank = bankSubmitted ? bankRes.rows[0] : null;
+        const bankApproved = bankSubmitted && bank?.verification_status === "APPROVED";
+
+        // ---------- OVERALL ----------
+        const canGoOnline = documentsApproved && vehicleApproved && bankApproved;
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                can_go_online: canGoOnline,
+
+                documents: {
+                    submitted: documentsSubmitted,
+                    approved: documentsApproved,
+                    pending: documentsPending,
+                    pending_count: documentsPending.length,
+                    verification_status: documentVerificationStatus,
+                },
+
+                vehicle: {
+                    submitted: vehicleSubmitted,
+                    approved: vehicleApproved,
+                    data: vehicle,
+                },
+
+                bank: {
+                    submitted: bankSubmitted,
+                    approved: bankApproved,
+                    data: bank,
+                },
+            },
+        });
+    } catch (error) {
+        console.error("Get Onboarding Status Error:", error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const getPendingPayments = async (req, res) => {
+    try {
+        const driver_id = req.user.userId;
+
+        const result = await pool.query(
+            `SELECT
+         r.id AS ride_id,
+         r.ride_unique_id,
+         r.pickup_address,
+         r.drop_address,
+         r.distance,
+         r.final_amount,
+         r.payment_method,
+         r.payment_status,
+         r.ride_completed_at,
+         r.created_at,
+         u.full_name AS customer_name,
+         u.phone AS customer_phone
+       FROM public.rides r
+       LEFT JOIN public.users u ON u.id = r.user_id
+       WHERE r.driver_id = $1
+         AND r.ride_status = 'COMPLETED'
+         AND r.payment_status = 'PENDING'
+       ORDER BY r.ride_completed_at DESC NULLS LAST, r.created_at DESC`,
+            [driver_id]
+        );
+
+        const total = result.rows.reduce(
+            (sum, r) => sum + Number(r.final_amount || 0),
+            0
+        );
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                count: result.rows.length,
+                total_pending: Math.round(total * 100) / 100,
+                rides: result.rows.map((r) => ({
+                    ride_id: r.ride_id,
+                    ride_unique_id: r.ride_unique_id,
+                    pickup_address: r.pickup_address,
+                    drop_address: r.drop_address,
+                    distance: r.distance,
+                    final_amount: Number(r.final_amount || 0),
+                    payment_method: r.payment_method,
+                    payment_status: r.payment_status,
+                    completed_at: r.ride_completed_at,
+                    created_at: r.created_at,
+                    customer: {
+                        full_name: r.customer_name,
+                        phone: r.customer_phone,
+                    },
+                })),
+            },
+        });
+    } catch (error) {
+        console.error("Get Pending Payments Error:", error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const getDriverRideById = async (req, res) => {
+    try {
+        const driverId = req.user.userId;   // or req.driver.id depending on your auth
+        const { id } = req.params;
+
+        if (!/^\d+$/.test(id)) {
+            return res.status(400).json({ success: false, message: "Invalid ride id" });
+        }
+
+        const { rows: [ride] } = await pool.query(
+            `SELECT id, user_id, driver_id, ride_status,
+              payment_method, payment_status, final_amount
+       FROM rides
+       WHERE id = $1 AND driver_id = $2
+       LIMIT 1`,
+            [id, driverId]
+        );
+
+        if (!ride) {
+            return res.status(404).json({ success: false, message: "Ride not found" });
+        }
+
+        return res.json({ success: true, data: ride });
+    } catch (e) {
+        console.error("getDriverRideById error:", e);
+        return res.status(500).json({ success: false, message: e.message });
+    }
+};
+
 module.exports = {
     loginDriver,
     registerDriver,
@@ -1360,5 +2724,21 @@ module.exports = {
     upsertVehicleDetails,
     getVehicleDetails,
     getBankDetails,
-    upsertBankDetails
+    upsertBankDetails,
+    toggleOnline,
+    getDriverStatus,
+    getCurrentRide,
+    markArrived,
+    // payForRide
+    markRidePaid,
+    reportPaymentIssue,
+    getDriverRides,
+    getDriverWallet,
+    getDriverNotifications,
+    markDriverNotificationRead,
+    markAllDriverNotificationsRead,
+    createDriverNotification,
+    getOnboardingStatus,
+    getPendingPayments,
+    getDriverRideById
 };

@@ -9,6 +9,7 @@ const cookieParser = require('cookie-parser')
 const fs = require("fs");
 const path = require("path");
 const pool = require("./middleware/db.connection")
+const razorpayWebhook = require("./controllers/UserAuthentication/Payment.Controller.js")
 require("dotenv").config();
 // const errorHandler = require("./middleware/ErrorHandler.js");
 // const sqlInjectionProtection = require("./middleware/sqlInjectionProtection.js");
@@ -16,7 +17,7 @@ const app = express();
 
 // Middlewares
 app.use(cors({
-    origin: "", // Allow multiple domains
+    origin: "*", // Allow multiple domains
     credentials: true,
     methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
     allowedHeaders: "Content-Type, Authorization"
@@ -69,6 +70,40 @@ app.use(limiter);
 //     next();
 // });
 
+require("./services/rideScheduler.js")(pool);
+
+
+// app.use(
+//     "/public",
+//     express.static(path.join(__dirname, "public"), {
+//         dotfiles: "deny",
+//         extensions: ["html", "css", "js"],
+//         maxAge: "1h",           // ✅ cache static for 1 hour
+//         immutable: true,
+//     })
+// );
+
+app.use(
+    "/uploads",
+    (req, res, next) => {
+        // Allow any origin to load images
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+        // Remove any blocking headers set by middleware above
+        res.removeHeader("Cross-Origin-Embedder-Policy");
+        next();
+    },
+    express.static(path.join(__dirname, "uploads"), {
+        setHeaders: (res) => {
+            res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+        },
+    })
+);
+
+// app.use(
+//     "/uploads",
+//     express.static(path.join(__dirname, "uploads"))
+// );
 app.use(
     "/public",
     express.static(path.join(__dirname, "public"), {
@@ -78,6 +113,13 @@ app.use(
         immutable: true,
     })
 );
+
+// app.post(
+//     "/api/webhooks/razorpay",
+//     express.raw({ type: "application/json" }),
+//     razorpayWebhook
+// );
+
 
 // 2. Everything else (APIs) = no cache
 app.use((req, res, next) => {
@@ -97,6 +139,10 @@ app.use(morgan(logFormat, { stream: accessLogStream }));
 const Userrouter = require('./routes/UserRoutes/User.routes.js')
 const Driverrouter = require('./routes/DriverRoutes/Driver.routes.js')
 const Commonrouter = require('./routes/UserDriverRoutes/User_Driver.routes.js')
+const Paymentrouter = require('./routes/UserRoutes/Payment.routes.js')
+const Adminrouter = require('./routes/AdminRoutes/Admin.routes.js')
+
+
 // User Routes
 app.use(`${process.env.BASE_NAVIGATE}user`, Userrouter)
 
@@ -106,6 +152,11 @@ app.use(`${process.env.BASE_NAVIGATE}driver`, Driverrouter)
 
 // Common Routes
 app.use(`${process.env.BASE_NAVIGATE}user_driver`, Commonrouter)
+
+app.use(`${process.env.BASE_NAVIGATE}user/payment`, Paymentrouter)
+
+app.use(`${process.env.BASE_NAVIGATE}admin`, Adminrouter)
+
 
 
 app.get('/', (req, res) => {

@@ -146,17 +146,25 @@ const emitRideCancelled = (userIdOrDriverId, data, recipientType) => {
     io.to(room).emit("ride_cancelled", data);
 };
 
-const emitRidePaid = (recipientId, data, recipientType = "USER") => {
-    const io = getIO();
-    const socketId =
-        recipientType === "DRIVER"
-            ? onlineDrivers.get(Number(recipientId))
-            : onlineUsers.get(Number(recipientId));
+// const emitRidePaid = (recipientId, data, recipientType = "USER") => {
+//     const io = getIO();
+//     const socketId =
+//         recipientType === "DRIVER"
+//             ? onlineDrivers.get(Number(recipientId))
+//             : onlineUsers.get(Number(recipientId));
 
-    if (socketId) {
-        io.to(socketId).emit("ride_paid", data);
-    }
+//     if (socketId) {
+//         io.to(socketId).emit("ride_paid", data);
+//     }
+// };
+const emitRidePaid = (recipientId, data, recipientType = "USER") => {
+  const io = getIO();
+  const id = Number(recipientId);
+  const room = recipientType === "DRIVER" ? `driver:${id}` : `user:${id}`;
+  io.to(room).emit("ride_paid", data);
+  console.log(`📤 ride_paid → ${room}`, data);
 };
+
 
 /**
  * Notify BOTH the customer and the driver that a ride has been paid.

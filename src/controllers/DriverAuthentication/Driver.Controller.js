@@ -418,20 +418,112 @@ const registerDriver = async (req, res) => {
     }
 };
 
+// const updateDriverProfile = async (req, res) => {
+//     try {
+
+//         // Check Validation Errors
+//         const errors = validationResult(req);
+
+//         if (!errors.isEmpty()) {
+//             return res.status(400).json({
+//                 success: false,
+//                 errors: errors.array()
+//             });
+//         }
+
+//         // Driver ID from JWT
+//         const driverId = req.user.userId;
+
+//         const {
+//             full_name,
+//             email,
+//             phone,
+//             profile_image,
+//             license_number,
+//             aadhaar_number,
+//             pan_number
+//         } = req.body;
+
+//         // Execute Stored Procedure
+//         const result = await pool.query(
+//             `
+//             CALL public.update_driver_profile(
+//                 $1,  -- driver_id
+//                 $2,  -- full_name
+//                 $3,  -- email
+//                 $4,  -- phone
+//                 $5,  -- profile_image
+//                 $6,  -- license_number
+//                 $7,  -- aadhaar_number
+//                 $8,  -- pan_number
+//                 NULL
+//             )
+//             `,
+//             [
+//                 driverId,
+//                 full_name,
+//                 email,
+//                 phone,
+//                 profile_image || null,
+//                 license_number,
+//                 aadhaar_number || null,
+//                 pan_number || null
+//             ]
+//         );
+
+//         // Check Procedure Response
+//         if (
+//             !result.rows ||
+//             result.rows.length === 0
+//         ) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: "Unable to update driver profile"
+//             });
+//         }
+
+//         const response = result.rows[0].p_response;
+
+//         // Procedure Failed
+//         if (!response.success) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: response.message
+//             });
+//         }
+
+//         // Success
+//         return res.status(200).json({
+//             success: true,
+//             message: response.message,
+//             data: response.data
+//         });
+
+//     } catch (error) {
+
+//         console.error(
+//             "Update Driver Profile Error:",
+//             error
+//         );
+
+//         return res.status(500).json({
+//             success: false,
+//             message: "Internal Server Error"
+//         });
+
+//     }
+// };
+
 const updateDriverProfile = async (req, res) => {
     try {
-
-        // Check Validation Errors
         const errors = validationResult(req);
-
         if (!errors.isEmpty()) {
             return res.status(400).json({
                 success: false,
-                errors: errors.array()
+                errors: errors.array(),
             });
         }
 
-        // Driver ID from JWT
         const driverId = req.user.userId;
 
         const {
@@ -441,76 +533,92 @@ const updateDriverProfile = async (req, res) => {
             profile_image,
             license_number,
             aadhaar_number,
-            pan_number
+            pan_number,
+            address,
+            city,
+            gender,
+            dob,
         } = req.body;
 
-        // Execute Stored Procedure
+        // Validate DOB if provided
+        let dobValue = null;
+        if (dob && String(dob).trim()) {
+            const d = new Date(dob);
+            if (isNaN(d.getTime())) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid date of birth",
+                });
+            }
+            dobValue = d.toISOString().slice(0, 10); // YYYY-MM-DD
+        }
+
         const result = await pool.query(
-            `
-            CALL public.update_driver_profile(
-                $1,  -- driver_id
-                $2,  -- full_name
-                $3,  -- email
-                $4,  -- phone
-                $5,  -- profile_image
-                $6,  -- license_number
-                $7,  -- aadhaar_number
-                $8,  -- pan_number
-                NULL
-            )
-            `,
+            `UPDATE public.drivers
+                SET full_name       = $1,
+                    email           = $2,
+                    phone           = $3,
+                    profile_image   = $4,
+                    license_number  = $5,
+                    aadhaar_number  = $6,
+                    pan_number      = $7,
+                    address         = $8,
+                    city            = $9,
+                    gender          = $10,
+                    dob             = $11,
+                    updated_at      = CURRENT_TIMESTAMP
+              WHERE id = $12
+              RETURNING
+                    id, full_name, email, phone, profile_image,
+                    address, city, gender, dob,
+                    license_number, aadhaar_number, pan_number,
+                    is_online, is_available, is_blocked,
+                    rating, total_rides, verification_status`,
             [
-                driverId,
                 full_name,
                 email,
                 phone,
                 profile_image || null,
                 license_number,
                 aadhaar_number || null,
-                pan_number || null
+                pan_number || null,
+                address || null,
+                city || null,
+                gender || null,
+                dobValue,
+                driverId,
             ]
         );
 
-        // Check Procedure Response
-        if (
-            !result.rows ||
-            result.rows.length === 0
-        ) {
-            return res.status(400).json({
+        if (result.rows.length === 0) {
+            return res.status(404).json({
                 success: false,
-                message: "Unable to update driver profile"
+                message: "Driver not found",
             });
         }
 
-        const response = result.rows[0].p_response;
-
-        // Procedure Failed
-        if (!response.success) {
-            return res.status(400).json({
-                success: false,
-                message: response.message
-            });
-        }
-
-        // Success
         return res.status(200).json({
             success: true,
-            message: response.message,
-            data: response.data
+            message: "Driver profile updated",
+            data: result.rows[0],
         });
-
     } catch (error) {
+        console.error("Update Driver Profile Error:", error);
 
-        console.error(
-            "Update Driver Profile Error:",
-            error
-        );
+        // Handle unique constraint on email/phone
+        if (error.code === "23505") {
+            const field = error.constraint?.includes("email") ? "email" : "phone";
+            return res.status(409).json({
+                success: false,
+                message: `This ${field} is already in use`,
+                field,
+            });
+        }
 
         return res.status(500).json({
             success: false,
-            message: "Internal Server Error"
+            message: error.message,
         });
-
     }
 };
 
@@ -1980,15 +2088,59 @@ const toggleOnline = async (req, res) => {
     }
 };
 
+// const getDriverStatus = async (req, res) => {
+//     try {
+//         const driver_id = req.user.userId;
+
+//         const result = await pool.query(
+//             `SELECT id, full_name, is_online, is_available, is_blocked,
+//               rating, total_rides, current_latitude, current_longitude
+//        FROM public.drivers
+//        WHERE id = $1`,
+//             [driver_id]
+//         );
+
+//         if (result.rows.length === 0) {
+//             return res.status(404).json({ success: false, message: "Driver not found" });
+//         }
+
+//         return res.status(200).json({ success: true, data: result.rows[0] });
+//     } catch (error) {
+//         console.error("Get Driver Status Error:", error);
+//         return res.status(500).json({ success: false, message: error.message });
+//     }
+// };
+
+// GET /driver/current_ride
+
 const getDriverStatus = async (req, res) => {
     try {
         const driver_id = req.user.userId;
 
         const result = await pool.query(
-            `SELECT id, full_name, is_online, is_available, is_blocked,
-              rating, total_rides, current_latitude, current_longitude
-       FROM public.drivers
-       WHERE id = $1`,
+            `SELECT
+                id,
+                full_name,
+                email,
+                phone,
+                profile_image,
+                address,
+                city,
+                gender,
+                dob,
+                license_number,
+                aadhaar_number,
+                pan_number,
+                is_online,
+                is_available,
+                is_blocked,
+                rating,
+                total_rides,
+                current_latitude,
+                current_longitude,
+                verification_status
+             FROM public.drivers
+             WHERE id = $1`,
             [driver_id]
         );
 
@@ -2003,7 +2155,6 @@ const getDriverStatus = async (req, res) => {
     }
 };
 
-// GET /driver/current_ride
 const getCurrentRide = async (req, res) => {
     try {
         const driver_id = req.user.userId;
@@ -2709,7 +2860,43 @@ const getDriverRideById = async (req, res) => {
     }
 };
 
+const uploadDriverAvatar = async (req, res) => {
+    try {
+        const driverId = req.user?.userId;
+        if (!driverId) {
+            return res.status(401).json({ success: false, message: "Unauthorized" });
+        }
+        if (!req.file) {
+            return res.status(400).json({ success: false, message: "No file uploaded" });
+        }
+
+        const relativeUrl = `/uploads/profile/${req.file.filename}`;
+
+        const result = await pool.query(
+            `UPDATE public.drivers
+         SET profile_image = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2
+       RETURNING id, profile_image`,
+            [relativeUrl, driverId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, message: "Driver not found" });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "Profile picture updated",
+            data: { profile_image: relativeUrl },
+        });
+    } catch (err) {
+        console.error("uploadDriverAvatar error:", err);
+        return res.status(500).json({ success: false, message: "Upload failed" });
+    }
+};
+
 module.exports = {
+    uploadDriverAvatar,
     loginDriver,
     registerDriver,
     updateDriverProfile,

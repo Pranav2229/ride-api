@@ -291,13 +291,12 @@ router.post(
 );
 
 router.get("/rides/active", authMiddleware, verifySession, getActiveRide);
-router.get("/places/search", authMiddleware, verifySession, searchPlacesController);
-router.get("/places/route", authMiddleware, verifySession, getRouteController);
+router.get("/places/search", searchPlacesController);
+router.get("/places/route", getRouteController);
 router.get("/rides/unpaid", authMiddleware, verifySession, getUnpaidRides);
 
 router.post(
   "/rides/estimate",
-  authMiddleware, verifySession,
   [
     body("distance_km")
       .notEmpty().withMessage("distance_km is required")

@@ -33,9 +33,11 @@ const {
   estimateFares,
   rateRide,
   getRideById,
-  getUnpaidRides
+  getUnpaidRides,
+  uploadUserAvatar
 } = require('../../controllers/UserAuthentication/User.Controller.js');
 const authMiddleware = require("../../middleware/Auth.token.js");
+const uploadProfile = require("../../middleware/uploadProfile");
 const verifySession = require('../../middleware/SessionHandling/VarifyingSession.js')
 // router.post("/login_user", [
 //   body("email")
@@ -319,6 +321,14 @@ router.post(
     body("review").optional({ nullable: true, checkFalsy: true }).trim().isLength({ max: 500 }),
   ],
   rateRide
+);
+
+router.post(
+  "/upload_avatar",
+  authMiddleware,
+  verifySession,
+  uploadProfile.single("avatar"),
+  uploadUserAvatar
 );
 
 module.exports = router;

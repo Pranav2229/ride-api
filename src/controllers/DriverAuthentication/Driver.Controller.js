@@ -14,7 +14,7 @@ const {
     emitDriverArrived
 } = require("../../sockets/RideSocket/ride.socket.js");
 const { generateOTP } = require("../../middleware/otp.js")
-
+const { sendOtpEmail } = require("../../services/email.service.js");
 const loginDriver = async (req, res) => {
     try {
         const errors = validationResult(req);
@@ -397,6 +397,18 @@ const registerDriver = async (req, res) => {
             ]
         );
 
+        // ✅ NEW: Send OTP via email (fire-and-forget)
+        try {
+            await sendOtpEmail({
+                toEmail: email,
+                toName: full_name,
+                otpCode: otp,
+                purpose: "registration",
+            });
+        } catch (e) {
+            console.error("OTP email send error (non-blocking):", e?.message);
+        }
+
 
         // Registration Successful
         return res.status(201).json({
@@ -642,7 +654,7 @@ const acceptRide = async (req, res) => {
         // From JWT token
         const driver_id = req.user.userId;
 
-       
+
 
         const result = await pool.query(`CALL public.accept_ride($1,$2,$3,NULL)`,
             [
@@ -680,7 +692,7 @@ const acceptRide = async (req, res) => {
             }
         );
 
-         // ✅ NEW: notify other drivers that this ride was taken
+        // ✅ NEW: notify other drivers that this ride was taken
         try {
             const { getIO } = require("../../sockets/index.js");
             const io = getIO();

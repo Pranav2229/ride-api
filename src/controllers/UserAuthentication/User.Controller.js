@@ -16,6 +16,7 @@ const { getNearbyDriversForSocket } = require("../../services/driver.service.js"
 const { emitRideToDrivers } = require("../../sockets/RideSocket/ride.socket.js")
 const { searchPlaces } = require("../../middleware/nominatim.service.js");
 const { getRoute } = require("../../middleware/osrm.service.js");
+const { sendOtpEmail } = require("../../services/email.service.js");
 
 // const loginUser = async (req, res) => {
 //   try {
@@ -341,6 +342,17 @@ const registerUser = async (req, res) => {
       ]
     );
 
+     // ✅ NEW: Send OTP via email (fire-and-forget — don't block response)
+    try {
+      await sendOtpEmail({
+        toEmail: email,
+        toName: full_name,
+        otpCode: otp,
+        purpose: "registration",
+      });
+    } catch (e) {
+      console.error("OTP email send error (non-blocking):", e?.message);
+    }
 
     return res.status(201).json({
       success: true,

@@ -6,13 +6,17 @@ const {
 const {
     cancelRide,
     refreshToken,
-    resendUserOTP
+    resendUserOTP,
+    getMessages,
+    sendMessage
 } = require('../../controllers/UserDriverAuthentication/UserDriver.Controller.js');
 const authMiddleware = require("../../middleware/Auth.token.js");
 const {
     getIO
 } = require("../../sockets/index.js");
 const verifySession = require("../../middleware/SessionHandling/VarifyingSession.js")
+const verifyAnySession = require("../../middleware/SessionHandling/AnySession.js")
+
 router.post(
     "/cancel_ride",
     authMiddleware,
@@ -48,6 +52,22 @@ router.post(
             .withMessage("User ID must be a valid number")
     ],
     resendUserOTP
+);
+
+// Chat
+router.get(
+  "/rides/:rideId/messages",
+  authMiddleware,
+  verifyAnySession,
+  getMessages
+);
+
+router.post(
+  "/rides/:rideId/messages",
+  authMiddleware,
+  verifyAnySession,
+  [body("message").trim().notEmpty().isLength({ max: 1000 })],
+  sendMessage
 );
 
 module.exports = router;

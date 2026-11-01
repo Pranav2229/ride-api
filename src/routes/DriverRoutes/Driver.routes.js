@@ -35,10 +35,12 @@ const {
   createDriverNotification,
   getPendingPayments,
   getOnboardingStatus,
-  getDriverRideById
+  getDriverRideById,
+  uploadDriverAvatar,
 } = require('../../controllers/DriverAuthentication/Driver.Controller.js');
 const uploadDocument = require("../../middleware/uploadDocument.js")
 const authMiddleware = require("../../middleware/Auth.token.js");
+const uploadProfile = require("../../middleware/uploadProfile");
 const verifyDriverSession = require("../../middleware/SessionHandling/DriverSession.js")
 const validate = (req, res, next) => {
   const errors = validationResult(req);
@@ -99,48 +101,48 @@ router.post(
   registerDriver
 );
 
-router.put(
-  "/update_driver_profile",
+// router.put(
+//   "/update_driver_profile",
 
-  [
-    body("full_name")
-      .trim()
-      .notEmpty()
-      .withMessage("Full name is required"),
+//   [
+//     body("full_name")
+//       .trim()
+//       .notEmpty()
+//       .withMessage("Full name is required"),
 
-    body("email")
-      .trim()
-      .isEmail()
-      .withMessage("Valid email is required"),
+//     body("email")
+//       .trim()
+//       .isEmail()
+//       .withMessage("Valid email is required"),
 
-    body("phone")
-      .trim()
-      .isLength({ min: 10, max: 15 })
-      .withMessage("Valid phone number is required"),
+//     body("phone")
+//       .trim()
+//       .isLength({ min: 10, max: 15 })
+//       .withMessage("Valid phone number is required"),
 
-    body("license_number")
-      .trim()
-      .notEmpty()
-      .withMessage("License number is required"),
+//     body("license_number")
+//       .trim()
+//       .notEmpty()
+//       .withMessage("License number is required"),
 
-    body("aadhaar_number")
-      .optional({ nullable: true })
-      .trim()
-      .isLength({ min: 12, max: 12 })
-      .withMessage("Aadhaar number must be 12 digits"),
+//     body("aadhaar_number")
+//       .optional({ nullable: true })
+//       .trim()
+//       .isLength({ min: 12, max: 12 })
+//       .withMessage("Aadhaar number must be 12 digits"),
 
-    body("pan_number")
-      .optional({ nullable: true })
-      .trim()
-      .isLength({ min: 10, max: 10 })
-      .withMessage("PAN number must be 10 characters"),
+//     body("pan_number")
+//       .optional({ nullable: true })
+//       .trim()
+//       .isLength({ min: 10, max: 10 })
+//       .withMessage("PAN number must be 10 characters"),
 
-    body("profile_image")
-      .optional({ nullable: true })
-      .trim()
-  ],
-  updateDriverProfile
-);
+//     body("profile_image")
+//       .optional({ nullable: true })
+//       .trim()
+//   ],
+//   updateDriverProfile
+// );
 
 // router.post(
 //   "/login_driver",
@@ -157,6 +159,26 @@ router.put(
 //   ],
 //   loginDriver
 // );
+
+router.put(
+  "/update_driver_profile",
+  authMiddleware,
+  verifyDriverSession,
+  [
+    body("full_name").trim().notEmpty().withMessage("Full name is required"),
+    body("email").trim().isEmail().withMessage("Valid email is required"),
+    body("phone").trim().isLength({ min: 10, max: 15 }).withMessage("Valid phone required"),
+    body("license_number").trim().notEmpty().withMessage("License number is required"),
+    body("aadhaar_number").optional({ nullable: true }).trim().isLength({ min: 12, max: 12 }),
+    body("pan_number").optional({ nullable: true }).trim().isLength({ min: 10, max: 10 }),
+    body("profile_image").optional({ nullable: true }).trim(),
+    body("address").optional({ nullable: true }).trim(),
+    body("city").optional({ nullable: true }).trim(),
+    body("gender").optional({ nullable: true }).trim(),
+    body("dob").optional({ nullable: true }).trim(),
+  ],
+  updateDriverProfile
+);
 
 router.post(
   "/login_driver",
@@ -193,7 +215,7 @@ router.post(
 
 router.post(
   "/accept_ride",
-  authMiddleware,verifyDriverSession,
+  authMiddleware, verifyDriverSession,
   [
     body("ride_id")
       .notEmpty()
@@ -212,7 +234,7 @@ router.post(
 
 router.post(
   "/start_ride",
-  authMiddleware,verifyDriverSession,
+  authMiddleware, verifyDriverSession,
   [
     body("ride_id")
       .notEmpty()
@@ -233,7 +255,7 @@ router.post(
 
 router.post(
   "/complete_ride",
-  authMiddleware,verifyDriverSession,
+  authMiddleware, verifyDriverSession,
   [
     body("ride_id")
       .notEmpty()
@@ -247,7 +269,7 @@ router.post(
 
 router.post(
   "/update_location",
-  authMiddleware,verifyDriverSession,
+  authMiddleware, verifyDriverSession,
   [
     body("latitude")
       .notEmpty()
@@ -276,7 +298,7 @@ router.post(
 
 router.get(
   "/get_driver_arnings",
-  authMiddleware,verifyDriverSession,
+  authMiddleware, verifyDriverSession,
   getDriverEarnings
 );
 
@@ -298,30 +320,30 @@ router.post(
 
 router.post(
   "/upload_document",
-  authMiddleware,verifyDriverSession,
+  authMiddleware, verifyDriverSession,
   uploadDocument.single("file"),
   uploadDriverDocument
 );
 
 router.get(
   "/document_status",
-  authMiddleware,verifyDriverSession,
+  authMiddleware, verifyDriverSession,
   getDriverDocumentStatus
 );
 router.post(
   "/vehicle_details",
-  authMiddleware,verifyDriverSession,
+  authMiddleware, verifyDriverSession,
   upsertVehicleDetails);
 
 router.get(
   "/vehicle_details",
-  authMiddleware,verifyDriverSession,
+  authMiddleware, verifyDriverSession,
   getVehicleDetails);
 
 
 router.post(
   "/bank_details",
-  authMiddleware,verifyDriverSession,
+  authMiddleware, verifyDriverSession,
   [
     body("account_holder_name")
       .trim()
@@ -374,27 +396,27 @@ router.post(
 
 router.get(
   "/get_bank_details",
-  authMiddleware,verifyDriverSession,
+  authMiddleware, verifyDriverSession,
   getBankDetails
 );
 
 router.post(
   "/toggle_online",
-  authMiddleware,verifyDriverSession,
+  authMiddleware, verifyDriverSession,
   [body("is_online").notEmpty().withMessage("is_online is required").isBoolean()],
   toggleOnline
 );
 
-router.get("/status", authMiddleware,verifyDriverSession, getDriverStatus);
+router.get("/status", authMiddleware, verifyDriverSession, getDriverStatus);
 router.get(
   "/current_ride",
-  authMiddleware,verifyDriverSession,
+  authMiddleware, verifyDriverSession,
   getCurrentRide
 );
 
 router.post(
   "/arrived_at_pickup",
-  authMiddleware,verifyDriverSession,
+  authMiddleware, verifyDriverSession,
   [
     body("ride_id").notEmpty().withMessage("Ride ID is required").isInt().withMessage("Ride ID must be a number"),
   ],
@@ -411,14 +433,14 @@ router.post(
 
 router.post(
   "/rides/:id/mark-paid",
-  authMiddleware,verifyDriverSession,
+  authMiddleware, verifyDriverSession,
   [body("payment_method").optional({ nullable: true, checkFalsy: true }).trim()],
   markRidePaid
 );
 
 router.post(
   "/rides/:id/report-payment-issue",
-  authMiddleware,verifyDriverSession,
+  authMiddleware, verifyDriverSession,
   [
     body("reason").trim().notEmpty().withMessage("Reason is required"),
     body("note").optional({ nullable: true, checkFalsy: true }).trim().isLength({ max: 500 }),
@@ -428,40 +450,48 @@ router.post(
 
 router.get(
   "/get_driver_rides",
-  authMiddleware,verifyDriverSession,
+  authMiddleware, verifyDriverSession,
   getDriverRides
 );
 
 router.get(
   "/get_driver_wallet",
-  authMiddleware,verifyDriverSession,
+  authMiddleware, verifyDriverSession,
   getDriverWallet
 );
 
 router.get(
   "/notifications",
-  authMiddleware,verifyDriverSession,
+  authMiddleware, verifyDriverSession,
   getDriverNotifications
 );
 
 router.post(
   "/notifications/read_all",
-  authMiddleware,verifyDriverSession,
+  authMiddleware, verifyDriverSession,
   markAllDriverNotificationsRead
 );
 
 router.post(
   "/notifications/:id/read",
-  authMiddleware,verifyDriverSession,
+  authMiddleware, verifyDriverSession,
   markDriverNotificationRead
 );
 
 router.get(
   "/onboarding_status",
-  authMiddleware,verifyDriverSession,
+  authMiddleware, verifyDriverSession,
   getOnboardingStatus
 );
 
-router.get("/pending_payments", authMiddleware,verifyDriverSession, getPendingPayments);
-router.get("/rides/:id", authMiddleware,verifyDriverSession, getDriverRideById);
+router.get("/pending_payments", authMiddleware, verifyDriverSession, getPendingPayments);
+router.get("/rides/:id", authMiddleware, verifyDriverSession, getDriverRideById);
+router.post(
+  "/upload_avatar",
+  authMiddleware,
+  verifyDriverSession,   // ← use your driver session middleware
+  uploadProfile.single("avatar"),
+  uploadDriverAvatar
+);
+
 module.exports = router;

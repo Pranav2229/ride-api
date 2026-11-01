@@ -2320,6 +2320,43 @@ const getUnpaidRides = async (req, res) => {
   }
 };
 
+const uploadUserAvatar = async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "No file uploaded" });
+    }
+
+    // Relative path served by app.use("/uploads", static)
+    const relativeUrl = `/uploads/profile/${req.file.filename}`;
+
+    // Update DB
+    const result = await pool.query(
+      `UPDATE public.users
+         SET profile_image = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2
+       RETURNING id, profile_image`,
+      [relativeUrl, userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Profile picture updated",
+      data: { profile_image: relativeUrl },
+    });
+  } catch (err) {
+    console.error("uploadUserAvatar error:", err);
+    return res.status(500).json({ success: false, message: "Upload failed" });
+  }
+};
+
 module.exports = {
   searchPlacesController,
   getRouteController,
@@ -2355,5 +2392,6 @@ module.exports = {
   estimateFares,
   rateRide,
   getRideById,
-  getUnpaidRides
+  getUnpaidRides,
+  uploadUserAvatar
 };

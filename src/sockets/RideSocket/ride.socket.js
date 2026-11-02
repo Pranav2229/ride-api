@@ -1,39 +1,36 @@
 const { getIO } = require("../index");
+const { Expo } = require("expo-server-sdk");
+
 const {
     onlineDrivers,
     onlineUsers
 } = require("../socketStore");
+const expo = new Expo();
 
-// const emitRideToDrivers = (
-//     drivers,
-//     rideData
-// ) => {
-
+// before adding ringtown
+// const emitRideToDrivers = (drivers, rideData) => {
 //     const io = getIO();
 
+
+
 //     drivers.forEach(driver => {
-
-//         const socketId =
-//             onlineDrivers.get(
-//                 Number(driver.driver_id)
-//             );
-
+//         const socketId = onlineDrivers.get(Number(driver.driver_id));
 //         if (socketId) {
-
-//             io.to(socketId).emit(
-//                 "new_ride",
-//                 rideData
-//             );
+//             io.to(socketId).emit("new_ride", rideData);
+//             console.log(`✅ new_ride emitted to driver ${driver.driver_id}`);
+//         } else {
+//             console.log(`❌ No socketId for driver ${driver.driver_id}`);
 //         }
 //     });
 // };
 
-const emitRideToDrivers = (drivers, rideData) => {
+
+const emitRideToDrivers = async (drivers, rideData) => {
     const io = getIO();
-
-
+    let pushMessages = [];
 
     drivers.forEach(driver => {
+        // 1. Send Socket (Foreground - plays sound if app is open)
         const socketId = onlineDrivers.get(Number(driver.driver_id));
         if (socketId) {
             io.to(socketId).emit("new_ride", rideData);
@@ -41,7 +38,33 @@ const emitRideToDrivers = (drivers, rideData) => {
         } else {
             console.log(`❌ No socketId for driver ${driver.driver_id}`);
         }
+
+        // 2. Prepare Push Notification (Background - plays sound if app is closed/minimized)
+        if (driver.push_token && Expo.isExpoPushToken(driver.push_token)) {
+            pushMessages.push({
+                to: driver.push_token,
+                sound: 'default', // Change to 'ride_ringtone.mp3' if you add a custom sound file
+                title: 'New Ride Request! 🚕',
+                body: `Pickup: ${rideData.pickup_address} | Fare: ₹${rideData.final_amount}`,
+                priority: 'max',
+                channelId: 'ride-alerts', // This links to the loud Android alarm channel we set up in the app
+                data: { rideId: rideData.id }, // So the app knows which ride to open
+            });
+        }
     });
+
+    // 3. Send the push notifications in chunks
+    if (pushMessages.length > 0) {
+        let chunks = expo.chunkPushNotifications(pushMessages);
+        for (let chunk of chunks) {
+            try {
+                let ticketChunk = await expo.sendPushNotificationsAsync(chunk);
+                console.log(`✅ Sent ${ticketChunk.length} background pushes`);
+            } catch (error) {
+                console.error("❌ Error sending push chunk:", error);
+            }
+        }
+    }
 };
 
 const emitRideAccepted = (

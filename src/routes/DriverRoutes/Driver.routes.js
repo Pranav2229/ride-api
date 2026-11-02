@@ -37,6 +37,7 @@ const {
   getOnboardingStatus,
   getDriverRideById,
   uploadDriverAvatar,
+  savePushToken
 } = require('../../controllers/DriverAuthentication/Driver.Controller.js');
 const uploadDocument = require("../../middleware/uploadDocument.js")
 const authMiddleware = require("../../middleware/Auth.token.js");
@@ -493,5 +494,8 @@ router.post(
   uploadProfile.single("avatar"),
   uploadDriverAvatar
 );
+
+router.post("/save_push_token", authMiddleware, verifyDriverSession, savePushToken);
+
 
 module.exports = router;

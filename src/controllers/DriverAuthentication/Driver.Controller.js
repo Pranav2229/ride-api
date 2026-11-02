@@ -2923,6 +2923,29 @@ const uploadDriverAvatar = async (req, res) => {
     }
 };
 
+const savePushToken = async (req, res) => {
+    try {
+        const driver_id = req.user.userId; // From your auth middleware
+        const { push_token } = req.body;
+
+        if (!push_token) {
+            return res.status(400).json({ success: false, message: "Push token is required" });
+        }
+
+        await pool.query(
+            `UPDATE public.drivers 
+             SET push_token = $1, updated_at = CURRENT_TIMESTAMP 
+             WHERE id = $2`,
+            [push_token, driver_id]
+        );
+
+        return res.status(200).json({ success: true, message: "Push token saved" });
+    } catch (error) {
+        console.error("Save Push Token Error:", error);
+        return res.status(500).json({ success: false, message: "Internal server error" });
+    }
+};
+
 module.exports = {
     uploadDriverAvatar,
     loginDriver,
@@ -2955,5 +2978,6 @@ module.exports = {
     createDriverNotification,
     getOnboardingStatus,
     getPendingPayments,
-    getDriverRideById
+    getDriverRideById,
+    savePushToken
 };

@@ -16,6 +16,7 @@ const { getNearbyDriversForSocket } = require("../../services/driver.service.js"
 const { emitRideToDrivers } = require("../../sockets/RideSocket/ride.socket.js")
 const { searchPlaces } = require("../../middleware/nominatim.service.js");
 const { getRoute } = require("../../middleware/osrm.service.js");
+const { sendOtpEmail } = require("../../services/email.service.js");
 
 // const loginUser = async (req, res) => {
 //   try {
@@ -341,6 +342,17 @@ const registerUser = async (req, res) => {
       ]
     );
 
+     // ✅ NEW: Send OTP via email (fire-and-forget — don't block response)
+    try {
+      await sendOtpEmail({
+        toEmail: email,
+        toName: full_name,
+        otpCode: otp,
+        purpose: "registration",
+      });
+    } catch (e) {
+      console.error("OTP email send error (non-blocking):", e?.message);
+    }
 
     return res.status(201).json({
       success: true,
@@ -868,75 +880,159 @@ const getUserRides = async (req, res) => {
   }
 };
 
+// const verifyUserOTP = async (req, res) => {
+//   try {
+
+//     const errors = validationResult(req);
+
+//     if (!errors.isEmpty()) {
+//       return res.status(400).json({
+//         success: false,
+//         errors: errors.array()
+//       });
+//     }
+
+//     const { user_id, otp } = req.body;
+
+//     const result = await pool.query(
+//       `
+//             CALL public.verify_user_otp(
+//                 $1,
+//                 $2,
+//                 NULL
+//             )
+//             `,
+//       [
+//         user_id,
+//         otp
+//       ]
+//     );
+
+//     if (
+//       !result.rows ||
+//       result.rows.length === 0
+//     ) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Unable to verify OTP"
+//       });
+//     }
+//     const response = result.rows[0].p_response;
+
+//     if (!response.success) {
+//       return res.status(400).json({
+//         success: false,
+//         message: response.message
+//       });
+//     }
+
+//     const response_user = response.data
+
+
+//     // Access Token
+//     const accessToken = jwt.sign(
+//       {
+//         userId: response_user.user_id,
+//         fullname: response_user.full_name
+//       },
+//       process.env.JWT_ACCESS_SECRET,
+//       {
+//         expiresIn: "15m"
+//       }
+//     );
+//     // Refresh Token
+//     const refreshToken = jwt.sign(
+//       {
+//         userId: response_user.user_id
+//       },
+//       process.env.JWT_REFRESH_SECRET,
+//       {
+//         expiresIn: "7d"
+//       }
+//     );
+
+//     return res.status(200).json({
+//       success: true,
+//       message: response.message,
+//       role: "CUSTOMER",
+//       data: {
+//         response_user,
+//         accessToken,
+//         refreshToken
+//       }
+//     });
+
+//   } catch (error) {
+
+//     console.error(error);
+
+//     return res.status(500).json({
+//       success: false,
+//       message: "Internal Server Error"
+//     });
+//   }
+// };
+
 const verifyUserOTP = async (req, res) => {
   try {
-
     const errors = validationResult(req);
-
     if (!errors.isEmpty()) {
       return res.status(400).json({
         success: false,
-        errors: errors.array()
+        errors: errors.array(),
       });
     }
 
     const { user_id, otp } = req.body;
 
     const result = await pool.query(
-      `
-            CALL public.verify_user_otp(
-                $1,
-                $2,
-                NULL
-            )
-            `,
-      [
-        user_id,
-        otp
-      ]
+      `CALL public.verify_user_otp($1, $2, NULL)`,
+      [user_id, otp]
     );
 
-    if (
-      !result.rows ||
-      result.rows.length === 0
-    ) {
+    if (!result.rows || result.rows.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "Unable to verify OTP"
+        message: "Unable to verify OTP",
       });
     }
-    const response = result.rows[0].p_response;
 
+    const response = result.rows[0].p_response;
     if (!response.success) {
       return res.status(400).json({
         success: false,
-        message: response.message
+        message: response.message,
       });
     }
 
-    const response_user = response.data
+    const response_user = response.data;
 
+    // ✅ NEW: generate session token + save to DB
+    const sessionToken = crypto.randomUUID();
+    const deviceLabel =
+      String(req.headers["x-device-label"] || "").slice(0, 200) || null;
+
+    await pool.query(
+      `UPDATE public.users
+         SET session_token = $1,
+             session_device = $2,
+             session_updated_at = CURRENT_TIMESTAMP
+       WHERE id = $3`,
+      [sessionToken, deviceLabel, response_user.user_id]
+    );
 
     // Access Token
     const accessToken = jwt.sign(
-      {
-        userId: response_user.user_id,
-        fullname: response_user.full_name
-      },
+      { userId: response_user.user_id, fullname: response_user.full_name },
       process.env.JWT_ACCESS_SECRET,
-      {
-        expiresIn: "15m"
-      }
+      { expiresIn: "15m" }
     );
+
     // Refresh Token
     const refreshToken = jwt.sign(
-      {
-        userId: response_user.user_id
-      },
+      { userId: response_user.user_id },
       process.env.JWT_REFRESH_SECRET,
-      {
-        expiresIn: "7d"
-      }
+      { expiresIn: "7d" }
     );
 
     return res.status(200).json({
@@ -946,17 +1042,15 @@ const verifyUserOTP = async (req, res) => {
       data: {
         response_user,
         accessToken,
-        refreshToken
-      }
+        refreshToken,
+        sessionToken,        // ✅ NEW
+      },
     });
-
   } catch (error) {
-
     console.error(error);
-
     return res.status(500).json({
       success: false,
-      message: "Internal Server Error"
+      message: "Internal Server Error",
     });
   }
 };

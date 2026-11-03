@@ -43,7 +43,7 @@ const emitRideToDrivers = async (drivers, rideData) => {
         if (driver.push_token && Expo.isExpoPushToken(driver.push_token)) {
             pushMessages.push({
                 to: driver.push_token,
-                sound: 'default', // Change to 'ride_ringtone.mp3' if you add a custom sound file
+                sound: 'ride_ringtone.mp3', // Change to 'ride_ringtone.mp3' if you add a custom sound file
                 title: 'New Ride Request! 🚕',
                 body: `Pickup: ${rideData.pickup_address} | Fare: ₹${rideData.final_amount}`,
                 priority: 'max',
@@ -181,11 +181,11 @@ const emitRideCancelled = (userIdOrDriverId, data, recipientType) => {
 //     }
 // };
 const emitRidePaid = (recipientId, data, recipientType = "USER") => {
-  const io = getIO();
-  const id = Number(recipientId);
-  const room = recipientType === "DRIVER" ? `driver:${id}` : `user:${id}`;
-  io.to(room).emit("ride_paid", data);
-  console.log(`📤 ride_paid → ${room}`, data);
+    const io = getIO();
+    const id = Number(recipientId);
+    const room = recipientType === "DRIVER" ? `driver:${id}` : `user:${id}`;
+    io.to(room).emit("ride_paid", data);
+    console.log(`📤 ride_paid → ${room}`, data);
 };
 
 

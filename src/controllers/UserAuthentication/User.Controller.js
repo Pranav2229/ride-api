@@ -17,6 +17,7 @@ const { emitRideToDrivers } = require("../../sockets/RideSocket/ride.socket.js")
 const { searchPlaces } = require("../../middleware/nominatim.service.js");
 const { getRoute } = require("../../middleware/osrm.service.js");
 const { sendOtpEmail } = require("../../services/email.service.js");
+const { reverseGeocode } = require("../../middleware/nominatim.service.js");
 
 // const loginUser = async (req, res) => {
 //   try {
@@ -2451,6 +2452,42 @@ const uploadUserAvatar = async (req, res) => {
   }
 };
 
+const reverseGeocodeController = async (req, res) => {
+  try {
+    const { lat, lng } = req.query;
+
+    const latitude = parseFloat(String(lat));
+    const longitude = parseFloat(String(lng));
+
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      return res.status(400).json({
+        success: false,
+        message: "lat and lng are required and must be numbers",
+      });
+    }
+
+    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid coordinates",
+      });
+    }
+
+    const result = await reverseGeocode(latitude, longitude);
+
+    return res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error("Reverse Geocode Controller Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to reverse geocode",
+    });
+  }
+};
+
 module.exports = {
   searchPlacesController,
   getRouteController,
@@ -2487,5 +2524,6 @@ module.exports = {
   rateRide,
   getRideById,
   getUnpaidRides,
-  uploadUserAvatar
+  uploadUserAvatar,
+  reverseGeocodeController
 };

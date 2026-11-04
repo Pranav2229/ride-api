@@ -34,11 +34,14 @@ const {
   rateRide,
   getRideById,
   getUnpaidRides,
-  uploadUserAvatar
+  uploadUserAvatar,
+  reverseGeocodeController
 } = require('../../controllers/UserAuthentication/User.Controller.js');
 const authMiddleware = require("../../middleware/Auth.token.js");
 const uploadProfile = require("../../middleware/uploadProfile");
 const verifySession = require('../../middleware/SessionHandling/VarifyingSession.js')
+
+
 // router.post("/login_user", [
 //   body("email")
 //     .notEmpty()
@@ -292,6 +295,7 @@ router.post(
 
 router.get("/rides/active", authMiddleware, verifySession, getActiveRide);
 router.get("/places/search", searchPlacesController);
+router.get("/places/reverse", reverseGeocodeController);   // ← ADD THIS
 router.get("/places/route", getRouteController);
 router.get("/rides/unpaid", authMiddleware, verifySession, getUnpaidRides);
 

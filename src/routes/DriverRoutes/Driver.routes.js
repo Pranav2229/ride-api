@@ -36,7 +36,7 @@ const {
   getOnboardingStatus,
   getDriverRideById,
   uploadDriverAvatar,
-  // savePushToken
+  savePushToken,
   getDriverWallet,
   rechargeDriverWallet,
 
@@ -510,7 +510,8 @@ router.post(
   rechargeDriverWallet
 );
 
-// router.post("/save_push_token", authMiddleware, verifyDriverSession, savePushToken);
+router.post("/save_push_token", authMiddleware, verifyDriverSession, savePushToken);
+
 router.post(
   "/payment/wallet/create-topup-order",
   authMiddleware,

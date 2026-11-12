@@ -28,7 +28,6 @@ const {
   markRidePaid,
   reportPaymentIssue,
   getDriverRides,
-  getDriverWallet,
   getDriverNotifications,
   markDriverNotificationRead,
   markAllDriverNotificationsRead,
@@ -37,12 +36,20 @@ const {
   getOnboardingStatus,
   getDriverRideById,
   uploadDriverAvatar,
-  savePushToken
+  savePushToken,
+  getDriverWallet,
+  rechargeDriverWallet,
+
 } = require('../../controllers/DriverAuthentication/Driver.Controller.js');
 const uploadDocument = require("../../middleware/uploadDocument.js")
 const authMiddleware = require("../../middleware/Auth.token.js");
 const uploadProfile = require("../../middleware/uploadProfile");
 const verifyDriverSession = require("../../middleware/SessionHandling/DriverSession.js")
+const {
+    createDriverWalletTopupOrder,
+    verifyDriverWalletTopup,
+} = require("../../controllers/UserAuthentication/Payment.Controller.js");   // adjust path
+
 const validate = (req, res, next) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -456,12 +463,6 @@ router.get(
 );
 
 router.get(
-  "/get_driver_wallet",
-  authMiddleware, verifyDriverSession,
-  getDriverWallet
-);
-
-router.get(
   "/notifications",
   authMiddleware, verifyDriverSession,
   getDriverNotifications
@@ -495,7 +496,33 @@ router.post(
   uploadDriverAvatar
 );
 
+router.get(
+  "/wallet",
+  authMiddleware, verifyDriverSession,
+  getDriverWallet
+);
+
+router.post(
+  "/wallet/recharge",
+  authMiddleware,
+  verifyDriverSession,
+  [body("amount").notEmpty().isFloat({ min: 1 }).withMessage("Amount must be > 0")],
+  rechargeDriverWallet
+);
+
 router.post("/save_push_token", authMiddleware, verifyDriverSession, savePushToken);
 
+router.post(
+  "/payment/wallet/create-topup-order",
+  authMiddleware,
+  verifyDriverSession,
+  createDriverWalletTopupOrder
+);
 
+router.post(
+  "/payment/wallet/verify-topup",
+  authMiddleware,
+  verifyDriverSession,
+  verifyDriverWalletTopup
+);
 module.exports = router;

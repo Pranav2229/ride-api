@@ -168,6 +168,127 @@ const verifyPayment = async (req, res) => {
 };
 
 
+//for online paymnet UPI directly to wallet
+// const verifyPayment = async (req, res) => {
+//     try {
+//         const userId = req.user.userId;
+//         const { rideId } = req.params;
+//         const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+
+//         if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+//             return res.status(400).json({ success: false, message: "Missing payment fields" });
+//         }
+
+//         // 1. Verify HMAC signature
+//         const expected = crypto
+//             .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+//             .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+//             .digest("hex");
+
+//         if (expected !== razorpay_signature) {
+//             await pool.query(
+//                 `UPDATE payments
+//          SET payment_status='FAILED',
+//              failure_reason='SIGNATURE_MISMATCH',
+//              gateway_response=$1,
+//              updated_at=NOW()
+//          WHERE gateway_order_id=$2`,
+//                 [JSON.stringify(req.body), razorpay_order_id]
+//             );
+//             return res.status(400).json({ success: false, message: "Invalid signature" });
+//         }
+
+//         // 2. Atomic update
+//         const client = await pool.connect();
+//         let ride = null;
+
+//         try {
+//             await client.query("BEGIN");
+
+//             const { rows: [payment] } = await client.query(
+//                 `UPDATE payments
+//          SET payment_status='CAPTURED',
+//              transaction_id=$1,
+//              gateway_payment_id=$1,
+//              gateway_signature=$2,
+//              gateway_response=$3,
+//              paid_at=NOW(),
+//              updated_at=NOW()
+//          WHERE gateway_order_id=$4 AND payment_status='PENDING'
+//          RETURNING id, ride_id`,
+//                 [razorpay_payment_id, razorpay_signature, JSON.stringify(req.body), razorpay_order_id]
+//             );
+
+//             if (!payment) {
+//                 await client.query("ROLLBACK");
+//                 return res.status(400).json({
+//                     success: false,
+//                     message: "Payment already processed or not found",
+//                 });
+//             }
+
+//             const { rows: [r] } = await client.query(
+//                 `UPDATE rides
+//          SET payment_status='PAID', payment_id=$1, updated_at=NOW()
+//          WHERE id=$2
+//          RETURNING id, user_id, driver_id, final_amount, payment_method`,
+//                 [payment.id, payment.ride_id]
+//             );
+
+//             ride = r;
+
+//             // ✅ NEW: Credit net earnings to driver wallet (skip cash rides)
+//             if (ride && ride.driver_id && ride.payment_method !== "Cash") {
+//                 const driverRes = await client.query(
+//                     `SELECT commission_rate FROM drivers WHERE id = $1`,
+//                     [ride.driver_id]
+//                 );
+//                 const commissionRate = Number(driverRes.rows[0]?.commission_rate || 15);
+//                 const netAmount = Number(ride.final_amount) * (1 - commissionRate / 100);
+
+//                 if (netAmount > 0) {
+//                     await client.query(
+//                         `SELECT public.credit_driver_wallet($1, $2, $3)`,
+//                         [
+//                             ride.driver_id,
+//                             netAmount.toFixed(2),
+//                             `Earning for ride #${ride.id} (after ${commissionRate}% commission)`,
+//                         ]
+//                     );
+//                     console.log(
+//                         `✅ Credited ₹${netAmount.toFixed(2)} to driver ${ride.driver_id} for ride ${ride.id}`
+//                     );
+//                 }
+//             }
+
+//             await client.query("COMMIT");
+//         } catch (txErr) {
+//             await client.query("ROLLBACK").catch(() => { });
+//             throw txErr;
+//         } finally {
+//             client.release();
+//         }
+
+//         // 3. Notify both sides
+//         if (ride) {
+//             emitPaymentCompleted(
+//                 ride.user_id,
+//                 ride.driver_id,
+//                 ride.id,
+//                 Number(ride.final_amount),
+//                 ride.payment_method
+//             );
+//         }
+
+//         return res.json({ success: true, message: "Payment verified" });
+//     } catch (e) {
+//         console.error("verifyPayment error:", e);
+//         return res.status(500).json({ success: false, message: e.message });
+//     }
+// };
+
+
+
 const markPaymentFailed = async (req, res) => {
     const { razorpay_order_id, reason, note } = req.body;
 
@@ -390,6 +511,130 @@ const verifyWalletTopup = async (req, res) => {
     }
 };
 
+const createDriverWalletTopupOrder = async (req, res) => {
+    try {
+        const driverId = req.user.userId;
+        const { amount } = req.body;
+
+        const numericAmount = Number(amount);
+        if (!Number.isFinite(numericAmount) || numericAmount <= 0 || numericAmount > 100000) {
+            return res.status(400).json({
+                success: false,
+                message: "Amount must be between 1 and 100000",
+            });
+        }
+
+        const amountPaise = Math.round(numericAmount * 100);
+
+        const order = await razorpay.orders.create({
+            amount: amountPaise,
+            currency: "INR",
+            receipt: `driver_wallet_${driverId}_${Date.now()}`,
+            notes: { driver_id: driverId, type: "driver_wallet_topup" },
+        });
+
+        // Track in payments table (user_id = NULL, driver_id = set)
+        await pool.query(
+            `INSERT INTO payments
+           (ride_id, user_id, driver_id, amount, currency,
+            payment_gateway, payment_method,
+            gateway_order_id, payment_status, updated_at)
+         VALUES (NULL, NULL, $1, $2, 'INR',
+                 'RAZORPAY', 'DRIVER_WALLET_TOPUP',
+                 $3, 'PENDING', NOW())`,
+            [driverId, numericAmount, order.id]
+        );
+
+        return res.json({
+            success: true,
+            data: {
+                razorpay_order_id: order.id,
+                razorpay_key_id: process.env.RAZORPAY_KEY_ID,
+                amount: amountPaise,
+                currency: "INR",
+            },
+        });
+    } catch (e) {
+        console.error("createDriverWalletTopupOrder error:", e);
+        return res.status(500).json({ success: false, message: e.message });
+    }
+};
+
+const verifyDriverWalletTopup = async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const driverId = req.user.userId;
+        const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+
+        if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+            return res.status(400).json({ success: false, message: "Missing fields" });
+        }
+
+        // 1. Signature check
+        const expected = crypto
+            .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+            .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+            .digest("hex");
+
+        if (expected !== razorpay_signature) {
+            return res.status(400).json({ success: false, message: "Invalid signature" });
+        }
+
+        await client.query("BEGIN");
+
+        // 2. Mark payment CAPTURED (and get the amount)
+        const { rows: [payment] } = await client.query(
+            `UPDATE payments
+         SET payment_status='CAPTURED',
+             transaction_id=$1,
+             gateway_payment_id=$1,
+             gateway_signature=$2,
+             paid_at=NOW(),
+             updated_at=NOW()
+         WHERE gateway_order_id=$3
+           AND payment_method='DRIVER_WALLET_TOPUP'
+           AND payment_status='PENDING'
+         RETURNING id, amount`,
+            [razorpay_payment_id, razorpay_signature, razorpay_order_id]
+        );
+
+        if (!payment) {
+            await client.query("ROLLBACK");
+            return res.status(400).json({ success: false, message: "Already processed" });
+        }
+
+        const amount = Number(payment.amount);
+
+        // 3. Credit driver wallet via stored procedure
+        const creditRes = await client.query(
+            `SELECT public.credit_driver_wallet($1, $2, $3) AS resp`,
+            [driverId, amount, "Wallet recharge via Razorpay"]
+        );
+
+        const creditResp = creditRes.rows[0].resp;
+        if (!creditResp.success) {
+            await client.query("ROLLBACK");
+            return res.status(400).json({ success: false, message: creditResp.message });
+        }
+
+        await client.query("COMMIT");
+
+        return res.json({
+            success: true,
+            data: {
+                balance: creditResp.data.new_balance,
+                amount,
+            },
+        });
+    } catch (e) {
+        await client.query("ROLLBACK").catch(() => { });
+        console.error("verifyDriverWalletTopup error:", e);
+        return res.status(500).json({ success: false, message: e.message });
+    } finally {
+        client.release();
+    }
+};
+
 module.exports = {
     createPaymentOrder,
     verifyPayment,
@@ -397,5 +642,7 @@ module.exports = {
     razorpayWebhook,
     getPaymentHistory,
     createWalletTopupOrder,
-    verifyWalletTopup
+    verifyWalletTopup,
+    createDriverWalletTopupOrder,    // ✅ new
+    verifyDriverWalletTopup,         // ✅ new
 };

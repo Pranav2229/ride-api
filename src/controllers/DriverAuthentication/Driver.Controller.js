@@ -2528,43 +2528,43 @@ const getDriverRides = async (req, res) => {
     }
 };
 
-const getDriverWallet = async (req, res) => {
-    try {
-        const driver_id = req.user.userId;
+// const getDriverWallet = async (req, res) => {
+//     try {
+//         const driver_id = req.user.userId;
 
-        const result = await pool.query(
-            `CALL public.get_driver_wallet($1, NULL)`,
-            [driver_id]
-        );
+//         const result = await pool.query(
+//             `CALL public.get_driver_wallet($1, NULL)`,
+//             [driver_id]
+//         );
 
-        if (!result.rows || result.rows.length === 0) {
-            return res.status(400).json({
-                success: false,
-                message: "Unable to fetch wallet",
-            });
-        }
+//         if (!result.rows || result.rows.length === 0) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: "Unable to fetch wallet",
+//             });
+//         }
 
-        const response = result.rows[0].p_response;
+//         const response = result.rows[0].p_response;
 
-        if (!response.success) {
-            return res.status(400).json({
-                success: false,
-                message: response.message,
-            });
-        }
+//         if (!response.success) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: response.message,
+//             });
+//         }
 
-        return res.status(200).json({
-            success: true,
-            data: response.data,
-        });
-    } catch (error) {
-        console.error("Get Driver Wallet Error:", error);
-        return res.status(500).json({
-            success: false,
-            message: error.message,
-        });
-    }
-};
+//         return res.status(200).json({
+//             success: true,
+//             data: response.data,
+//         });
+//     } catch (error) {
+//         console.error("Get Driver Wallet Error:", error);
+//         return res.status(500).json({
+//             success: false,
+//             message: error.message,
+//         });
+//     }
+// };
 
 const getDriverNotifications = async (req, res) => {
     try {
@@ -2925,24 +2925,67 @@ const uploadDriverAvatar = async (req, res) => {
 
 const savePushToken = async (req, res) => {
     try {
-        const driver_id = req.user.userId; // From your auth middleware
+        const driver_id = req.user.userId;
         const { push_token } = req.body;
-
         if (!push_token) {
-            return res.status(400).json({ success: false, message: "Push token is required" });
+            return res.status(400).json({ success: false, message: "Push token required" });
         }
-
         await pool.query(
-            `UPDATE public.drivers 
-             SET push_token = $1, updated_at = CURRENT_TIMESTAMP 
-             WHERE id = $2`,
+            `UPDATE public.drivers SET push_token = $1, updated_at = NOW() WHERE id = $2`,
             [push_token, driver_id]
         );
+        return res.json({ success: true });
+    } catch (e) {
+        console.error("savePushToken error:", e);
+        return res.status(500).json({ success: false, message: e.message });
+    }
+};
 
-        return res.status(200).json({ success: true, message: "Push token saved" });
+const getDriverWallet = async (req, res) => {
+    try {
+        const driver_id = req.user.userId;
+        const result = await pool.query(
+            `SELECT public.get_driver_wallet($1) AS resp`,
+            [driver_id]
+        );
+        const resp = result.rows[0].resp;
+        if (!resp.success) {
+            return res.status(404).json(resp);
+        }
+        return res.status(200).json(resp);
     } catch (error) {
-        console.error("Save Push Token Error:", error);
-        return res.status(500).json({ success: false, message: "Internal server error" });
+        console.error("Get Driver Wallet Error:", error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const rechargeDriverWallet = async (req, res) => {
+    try {
+        const driver_id = req.user.userId;
+        const { amount } = req.body;
+
+        const numericAmount = Number(amount);
+        if (!Number.isFinite(numericAmount) || numericAmount <= 0 || numericAmount > 100000) {
+            return res.status(400).json({
+                success: false,
+                message: "Amount must be between 1 and 100000",
+            });
+        }
+
+        const result = await pool.query(
+            `SELECT public.credit_driver_wallet($1, $2, $3) AS resp`,
+            [driver_id, numericAmount, "Wallet recharge"]
+        );
+
+        const resp = result.rows[0].resp;
+        if (!resp.success) {
+            return res.status(400).json(resp);
+        }
+
+        return res.status(200).json(resp);
+    } catch (error) {
+        console.error("Recharge Driver Wallet Error:", error);
+        return res.status(500).json({ success: false, message: error.message });
     }
 };
 
@@ -2979,5 +3022,6 @@ module.exports = {
     getOnboardingStatus,
     getPendingPayments,
     getDriverRideById,
+    rechargeDriverWallet,
     savePushToken
 };

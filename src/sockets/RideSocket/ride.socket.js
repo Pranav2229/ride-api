@@ -11,8 +11,6 @@ const expo = new Expo();
 // const emitRideToDrivers = (drivers, rideData) => {
 //     const io = getIO();
 
-
-
 //     drivers.forEach(driver => {
 //         const socketId = onlineDrivers.get(Number(driver.driver_id));
 //         if (socketId) {
@@ -30,7 +28,7 @@ const emitRideToDrivers = async (drivers, rideData) => {
     let pushMessages = [];
 
     drivers.forEach(driver => {
-        // 1. Send Socket (Foreground - plays sound if app is open)
+        // 1. Socket (foreground - app is open)
         const socketId = onlineDrivers.get(Number(driver.driver_id));
         if (socketId) {
             io.to(socketId).emit("new_ride", rideData);
@@ -38,27 +36,29 @@ const emitRideToDrivers = async (drivers, rideData) => {
         } else {
             console.log(`❌ No socketId for driver ${driver.driver_id}`);
         }
-
-        // 2. Prepare Push Notification (Background - plays sound if app is closed/minimized)
+        console.log("Token type:", typeof driver.push_token, "Value:", driver.push_token);
+        // 2. Push notification (background - app minimized or killed)
         if (driver.push_token && Expo.isExpoPushToken(driver.push_token)) {
             pushMessages.push({
                 to: driver.push_token,
-                sound: 'ride_ringtone.mp3', // Change to 'ride_ringtone.mp3' if you add a custom sound file
+                sound: 'ride_ringtone.mp3',
                 title: 'New Ride Request! 🚕',
                 body: `Pickup: ${rideData.pickup_address} | Fare: ₹${rideData.final_amount}`,
-                priority: 'max',
-                channelId: 'ride-alerts', // This links to the loud Android alarm channel we set up in the app
-                data: { rideId: rideData.id }, // So the app knows which ride to open
+                priority: 'high',
+                channelId: 'ride-alerts',         // ← must match app.json
+                data: { rideId: rideData.id },
             });
         }
     });
 
-    // 3. Send the push notifications in chunks
+    // 3. Send pushes
     if (pushMessages.length > 0) {
         let chunks = expo.chunkPushNotifications(pushMessages);
         for (let chunk of chunks) {
             try {
                 let ticketChunk = await expo.sendPushNotificationsAsync(chunk);
+                console.log("🎫 RAW TICKET RESPONSE:", JSON.stringify(ticketChunk, null, 2));
+
                 console.log(`✅ Sent ${ticketChunk.length} background pushes`);
             } catch (error) {
                 console.error("❌ Error sending push chunk:", error);

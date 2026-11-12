@@ -36,7 +36,7 @@ const emitRideToDrivers = async (drivers, rideData) => {
         } else {
             console.log(`❌ No socketId for driver ${driver.driver_id}`);
         }
-
+        console.log("Token type:", typeof driver.push_token, "Value:", driver.push_token);
         // 2. Push notification (background - app minimized or killed)
         if (driver.push_token && Expo.isExpoPushToken(driver.push_token)) {
             pushMessages.push({
@@ -44,7 +44,7 @@ const emitRideToDrivers = async (drivers, rideData) => {
                 sound: 'ride_ringtone.mp3',
                 title: 'New Ride Request! 🚕',
                 body: `Pickup: ${rideData.pickup_address} | Fare: ₹${rideData.final_amount}`,
-                priority: 'max',
+                priority: 'high',
                 channelId: 'ride-alerts',         // ← must match app.json
                 data: { rideId: rideData.id },
             });
@@ -57,6 +57,8 @@ const emitRideToDrivers = async (drivers, rideData) => {
         for (let chunk of chunks) {
             try {
                 let ticketChunk = await expo.sendPushNotificationsAsync(chunk);
+                console.log("🎫 RAW TICKET RESPONSE:", JSON.stringify(ticketChunk, null, 2));
+
                 console.log(`✅ Sent ${ticketChunk.length} background pushes`);
             } catch (error) {
                 console.error("❌ Error sending push chunk:", error);

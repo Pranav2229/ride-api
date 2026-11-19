@@ -39,15 +39,15 @@ const {
   savePushToken,
   getDriverWallet,
   rechargeDriverWallet,
-
+  updateMuteStatus
 } = require('../../controllers/DriverAuthentication/Driver.Controller.js');
 const uploadDocument = require("../../middleware/uploadDocument.js")
 const authMiddleware = require("../../middleware/Auth.token.js");
 const uploadProfile = require("../../middleware/uploadProfile");
 const verifyDriverSession = require("../../middleware/SessionHandling/DriverSession.js")
 const {
-    createDriverWalletTopupOrder,
-    verifyDriverWalletTopup,
+  createDriverWalletTopupOrder,
+  verifyDriverWalletTopup,
 } = require("../../controllers/UserAuthentication/Payment.Controller.js");   // adjust path
 
 const validate = (req, res, next) => {
@@ -525,4 +525,12 @@ router.post(
   verifyDriverSession,
   verifyDriverWalletTopup
 );
+
+router.post(
+  "/update_mute_status", 
+  authMiddleware, 
+  verifyDriverSession, 
+  updateMuteStatus
+);
+
 module.exports = router;

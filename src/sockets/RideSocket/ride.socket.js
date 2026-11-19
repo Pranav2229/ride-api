@@ -39,13 +39,16 @@ const emitRideToDrivers = async (drivers, rideData) => {
         console.log("Token type:", typeof driver.push_token, "Value:", driver.push_token);
         // 2. Push notification (background - app minimized or killed)
         if (driver.push_token && Expo.isExpoPushToken(driver.push_token)) {
+
+            const isMuted = driver.is_phone_muted === true;
+
             pushMessages.push({
                 to: driver.push_token,
-                sound: 'ride_ringtone.mp3',
+                sound: isMuted ? null : 'ride_ringtone.mp3', // ✅ Now it respects silent mode
                 title: 'New Ride Request! 🚕',
                 body: `Pickup: ${rideData.pickup_address} | Fare: ₹${rideData.final_amount}`,
                 priority: 'high',
-                channelId: 'ride-alerts',         // ← must match app.json
+                channelId: isMuted ? 'ride-alerts-silent' : 'ride-alerts',
                 data: { rideId: rideData.id },
             });
         }

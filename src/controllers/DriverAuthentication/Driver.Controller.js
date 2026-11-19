@@ -2989,7 +2989,32 @@ const rechargeDriverWallet = async (req, res) => {
     }
 };
 
+const updateMuteStatus = async (req, res) => {
+  try {
+    const driverId = req.user.userId;
+    const { is_muted } = req.body;
+
+    if (typeof is_muted !== "boolean") {
+      return res.status(400).json({ success: false, message: "is_muted must be a boolean" });
+    }
+
+    await pool.query(
+      `UPDATE public.drivers 
+       SET is_phone_muted = $1, updated_at = NOW() 
+       WHERE id = $2`,
+      [is_muted, driverId]
+    );
+
+    return res.status(200).json({ success: true });
+  } catch (error) {
+    console.error("Update Mute Status Error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+
 module.exports = {
+    updateMuteStatus,
     uploadDriverAvatar,
     loginDriver,
     registerDriver,

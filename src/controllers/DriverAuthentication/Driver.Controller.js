@@ -2178,7 +2178,7 @@ const getDriverStatus = async (req, res) => {
 
         return res.status(200).json({ success: true, data: result.rows[0] });
     } catch (error) {
-        console.error("Get Driver Status Error:", error);
+        console.error(" :", error);
         return res.status(500).json({ success: false, message: error.message });
     }
 };

@@ -18,6 +18,7 @@ const { searchPlaces } = require("../../middleware/nominatim.service.js");
 const { getRoute } = require("../../middleware/osrm.service.js");
 const { sendOtpEmail } = require("../../services/email.service.js");
 const { reverseGeocode } = require("../../middleware/nominatim.service.js");
+const { estimateAllVehicleFares, calculateCommission } = require("../../services/pricing.service.js");
 
 // const loginUser = async (req, res) => {
 //   try {
@@ -343,7 +344,7 @@ const registerUser = async (req, res) => {
       ]
     );
 
-     // ✅ NEW: Send OTP via email (fire-and-forget — don't block response)
+    // ✅ NEW: Send OTP via email (fire-and-forget — don't block response)
     try {
       await sendOtpEmail({
         toEmail: email,
@@ -628,8 +629,18 @@ const createRide = async (req, res) => {
       tax_amount,
       final_amount,
 
-      payment_method
+      payment_method,
+      commission_amount,
+      net_amount
     } = req.body;
+
+    const calcCommission = Number(commission_amount) > 0
+      ? Number(commission_amount)
+      : calculateCommission(Number(fare_amount || final_amount || 0));
+
+    const calcNetAmount = Number(net_amount) > 0
+      ? Number(net_amount)
+      : Math.max(0, Number(final_amount || fare_amount || 0) - calcCommission);
 
     // ✅ NEW: Validate wallet balance BEFORE creating the ride
     if (payment_method === "Wallet") {
@@ -735,6 +746,24 @@ const createRide = async (req, res) => {
         success: false,
         message: response.message
       });
+    }
+
+    // Store Kohima BuddyRide commission & driver net amount
+    try {
+      await pool.query(
+        `UPDATE public.rides
+         SET commission_amount = $1,
+             net_amount = $2
+         WHERE ride_unique_id = $3`,
+        [calcCommission, calcNetAmount, ride_unique_id]
+      );
+    } catch (colErr) {
+      console.warn("Could not set commission_amount/net_amount on rides (ensure DB migration is applied):", colErr.message);
+    }
+
+    if (response.data) {
+      response.data.commission_amount = calcCommission;
+      response.data.net_amount = calcNetAmount;
     }
 
     const nearbyDrivers =
@@ -2187,37 +2216,65 @@ const estimateFares = async (req, res) => {
       });
     }
 
-    const { distance_km, duration_min, is_night, vehicle_type } = req.body;
+    const {
+      distance_km,
+      duration_min,
+      is_night,
+      vehicle_type,
+      pickup_address,
+      drop_address,
+      pickup_latitude,
+      pickup_longitude,
+      drop_latitude,
+      drop_longitude,
+    } = req.body;
 
-    const result = await pool.query(
-      `CALL public.estimate_fares($1, $2, $3, $4, NULL)`,
-      [
-        distance_km,
-        duration_min,
-        is_night === true,
-        vehicle_type || null,
-      ]
-    );
+    // Calculate fares using Kohima Checkpoint & Landmark system with fallback
+    const vehicles = estimateAllVehicleFares({
+      pickup_address,
+      drop_address,
+      pickup_latitude: pickup_latitude !== undefined ? Number(pickup_latitude) : null,
+      pickup_longitude: pickup_longitude !== undefined ? Number(pickup_longitude) : null,
+      drop_latitude: drop_latitude !== undefined ? Number(drop_latitude) : null,
+      drop_longitude: drop_longitude !== undefined ? Number(drop_longitude) : null,
+      distance_km: Number(distance_km) || 0,
+      duration_min: Number(duration_min) || 0,
+      is_night: is_night === true,
+      vehicle_type: vehicle_type || null,
+    });
 
-    if (!result.rows || result.rows.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Unable to estimate fares",
-      });
-    }
 
-    const response = result.rows[0].p_response;
+    // const result = await pool.query(
+    //   `CALL public.estimate_fares($1, $2, $3, $4, NULL)`,
+    //   [
+    //     distance_km,
+    //     duration_min,
+    //     is_night === true,
+    //     vehicle_type || null,
+    //   ]
+    // );
 
-    if (!response.success) {
-      return res.status(400).json({
-        success: false,
-        message: response.message,
-      });
-    }
+    // if (!result.rows || result.rows.length === 0) {
+    //   return res.status(400).json({
+    //     success: false,
+    //     message: "Unable to estimate fares",
+    //   });
+    // }
+
+    // const response = result.rows[0].p_response;
+
+    // if (!response.success) {
+    //   return res.status(400).json({
+    //     success: false,
+    //     message: response.message,
+    //   });
+    // }
 
     return res.status(200).json({
       success: true,
-      data: response.data,
+      data: {
+        vehicles,
+      },
     });
   } catch (error) {
     console.error("Estimate Fares Error:", error);

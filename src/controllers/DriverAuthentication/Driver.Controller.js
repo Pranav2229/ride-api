@@ -15,6 +15,9 @@ const {
 } = require("../../sockets/RideSocket/ride.socket.js");
 const { generateOTP } = require("../../middleware/otp.js")
 const { sendOtpEmail } = require("../../services/email.service.js");
+const { calculateCommission } = require("../../services/pricing.service.js");
+
+
 const loginDriver = async (req, res) => {
     try {
         const errors = validationResult(req);
@@ -901,9 +904,9 @@ const startRide = async (req, res) => {
     }
 };
 
+
 // const completeRide = async (req, res) => {
 //     try {
-
 //         const errors = validationResult(req);
 
 //         if (!errors.isEmpty()) {
@@ -915,20 +918,15 @@ const startRide = async (req, res) => {
 
 //         const { ride_id } = req.body;
 
+//         // =====================================================
+//         // 1. Call SP to complete the ride
+//         // =====================================================
 //         const result = await pool.query(
-//             `
-//       CALL public.complete_ride(
-//         $1,
-//         NULL
-//       )
-//       `,
+//             `CALL public.complete_ride($1, NULL)`,
 //             [ride_id]
 //         );
 
-//         if (
-//             !result.rows ||
-//             result.rows.length === 0
-//         ) {
+//         if (!result.rows || result.rows.length === 0) {
 //             return res.status(400).json({
 //                 success: false,
 //                 message: "Unable to complete ride"
@@ -944,27 +942,114 @@ const startRide = async (req, res) => {
 //             });
 //         }
 
+//         // =====================================================
+//         // 2. ✅ If Wallet ride → debit now (inside this handler)
+//         // =====================================================
+//         const rideRes = await pool.query(
+//             `SELECT id, user_id, driver_id, final_amount, payment_method, payment_status
+//              FROM public.rides
+//              WHERE id = $1`,
+//             [ride_id]
+//         );
+
+//         const ride = rideRes.rows[0];
+
+//         if (ride && ride.payment_method === "Wallet" && ride.payment_status !== "PAID") {
+//             const client = await pool.connect();
+//             try {
+//                 await client.query("BEGIN");
+
+//                 // Lock user row
+//                 const userRes = await client.query(
+//                     `SELECT wallet_balance FROM public.users WHERE id = $1 FOR UPDATE`,
+//                     [ride.user_id]
+//                 );
+
+//                 const balance = Number(userRes.rows[0]?.wallet_balance || 0);
+//                 const fare = Number(ride.final_amount);
+
+//                 if (balance >= fare) {
+//                     const newBalance = balance - fare;
+
+//                     // Debit transaction
+//                     await client.query(
+//                         `INSERT INTO public.wallet_transactions
+//                            (user_id, type, amount, description, created_at)
+//                          VALUES ($1, 'DEBIT', $2, $3, CURRENT_TIMESTAMP)`,
+//                         [ride.user_id, fare, `Ride #${ride.id} payment`]
+//                     );
+
+//                     // Update balance
+//                     await client.query(
+//                         `UPDATE public.users SET wallet_balance = $1 WHERE id = $2`,
+//                         [newBalance, ride.user_id]
+//                     );
+
+//                     // Mark ride paid
+//                     await client.query(
+//                         `UPDATE public.rides
+//                          SET payment_status = 'PAID', updated_at = NOW()
+//                          WHERE id = $1`,
+//                         [ride.id]
+//                     );
+
+//                     // Log in payments table
+//                     await client.query(
+//                         `INSERT INTO public.payments
+//                            (ride_id, user_id, amount, currency,
+//                             payment_gateway, payment_method,
+//                             payment_status, paid_at, updated_at)
+//                          VALUES ($1, $2, $3, 'INR', NULL, 'WALLET', 'CAPTURED', NOW(), NOW())`,
+//                         [ride.id, ride.user_id, fare]
+//                     );
+
+//                     ride.payment_status = "PAID";
+//                     console.log(`✅ Wallet debited ₹${fare} for ride ${ride.id}`);
+//                 } else {
+//                     // Insufficient — leave PENDING
+//                     console.log(
+//                         `⚠️ Wallet insufficient for ride ${ride.id}: need ₹${fare}, have ₹${balance}`
+//                     );
+//                 }
+
+//                 await client.query("COMMIT");
+//             } catch (walletErr) {
+//                 await client.query("ROLLBACK").catch(() => { });
+//                 console.error("Wallet debit error:", walletErr);
+//                 // Don't fail the whole request — ride is completed
+//             } finally {
+//                 client.release();
+//             }
+//         }
+
+//         // =====================================================
+//         // 3. Emit ride_completed (as before) — with payment_status included
+//         // =====================================================
 //         emitRideCompleted(
 //             response.data.user_id,
-//             response.data
+//             {
+//                 ...response.data,
+//                 payment_status: ride?.payment_status || response.data.payment_status || "PENDING",
+//                 payment_method: ride?.payment_method || response.data.payment_method,
+//             }
 //         );
 
 //         return res.status(200).json({
 //             success: true,
 //             message: response.message,
-//             data: response.data
+//             data: {
+//                 ...response.data,
+//                 payment_status: ride?.payment_status || response.data.payment_status || "PENDING",
+//                 payment_method: ride?.payment_method || response.data.payment_method,
+//             },
 //         });
 
-
 //     } catch (error) {
-
 //         console.error(error);
-
 //         return res.status(500).json({
 //             success: false,
 //             message: error.message
 //         });
-
 //     }
 // };
 
@@ -1006,10 +1091,10 @@ const completeRide = async (req, res) => {
         }
 
         // =====================================================
-        // 2. ✅ If Wallet ride → debit now (inside this handler)
+        // 2. ✅ Financial processing: Wallet debit/credit & Cash commission
         // =====================================================
         const rideRes = await pool.query(
-            `SELECT id, user_id, driver_id, final_amount, payment_method, payment_status
+            `SELECT id, user_id, driver_id, fare_amount, commission_amount, net_amount, final_amount, payment_method, payment_status
              FROM public.rides
              WHERE id = $1`,
             [ride_id]
@@ -1017,71 +1102,164 @@ const completeRide = async (req, res) => {
 
         const ride = rideRes.rows[0];
 
-        if (ride && ride.payment_method === "Wallet" && ride.payment_status !== "PAID") {
-            const client = await pool.connect();
-            try {
-                await client.query("BEGIN");
+        if (ride) {
+            const finalAmount = Number(ride.final_amount || 0);
+            let commission = Number(ride.commission_amount || 0);
+            let netAmount = Number(ride.net_amount || 0);
 
-                // Lock user row
-                const userRes = await client.query(
-                    `SELECT wallet_balance FROM public.users WHERE id = $1 FOR UPDATE`,
-                    [ride.user_id]
-                );
+            if (commission <= 0 || netAmount <= 0) {
+                commission = calculateCommission(finalAmount > 0 ? finalAmount : 50);
+                netAmount = Math.max(0, finalAmount - commission);
+            }
 
-                const balance = Number(userRes.rows[0]?.wallet_balance || 0);
-                const fare = Number(ride.final_amount);
+            // Case A: Wallet Payment (Customer debited final_amount, Driver credited net_amount)
+            if (ride.payment_method === "Wallet" && ride.payment_status !== "PAID") {
+                const client = await pool.connect();
+                try {
+                    await client.query("BEGIN");
 
-                if (balance >= fare) {
-                    const newBalance = balance - fare;
-
-                    // Debit transaction
-                    await client.query(
-                        `INSERT INTO public.wallet_transactions
-                           (user_id, type, amount, description, created_at)
-                         VALUES ($1, 'DEBIT', $2, $3, CURRENT_TIMESTAMP)`,
-                        [ride.user_id, fare, `Ride #${ride.id} payment`]
+                    // Lock user row
+                    const userRes = await client.query(
+                        `SELECT wallet_balance FROM public.users WHERE id = $1 FOR UPDATE`,
+                        [ride.user_id]
                     );
 
-                    // Update balance
-                    await client.query(
-                        `UPDATE public.users SET wallet_balance = $1 WHERE id = $2`,
-                        [newBalance, ride.user_id]
-                    );
+                    const balance = Number(userRes.rows[0]?.wallet_balance || 0);
 
-                    // Mark ride paid
+                    if (balance >= finalAmount) {
+                        const newBalance = balance - finalAmount;
+
+                        // Debit user transaction
+                        await client.query(
+                            `INSERT INTO public.wallet_transactions
+                               (user_id, type, amount, description, created_at)
+                             VALUES ($1, 'DEBIT', $2, $3, CURRENT_TIMESTAMP)`,
+                            [ride.user_id, finalAmount, `Ride #${ride.id} payment`]
+                        );
+
+                        // Update user balance
+                        await client.query(
+                            `UPDATE public.users SET wallet_balance = $1 WHERE id = $2`,
+                            [newBalance, ride.user_id]
+                        );
+
+                        // Mark ride paid
+                        await client.query(
+                            `UPDATE public.rides
+                             SET payment_status = 'PAID', updated_at = NOW()
+                             WHERE id = $1`,
+                            [ride.id]
+                        );
+
+                        // Log in payments table
+                        await client.query(
+                            `INSERT INTO public.payments
+                               (ride_id, user_id, amount, currency,
+                                payment_gateway, payment_method,
+                                payment_status, paid_at, updated_at)
+                             VALUES ($1, $2, $3, 'INR', NULL, 'WALLET', 'CAPTURED', NOW(), NOW())`,
+                            [ride.id, ride.user_id, finalAmount]
+                        );
+
+                        ride.payment_status = "PAID";
+                        console.log(`✅ User wallet debited ₹${finalAmount} for ride #${ride.id}`);
+
+                        // Credit net earning to driver's wallet
+                        if (ride.driver_id && netAmount > 0) {
+                            const driverRes = await client.query(
+                                `SELECT wallet_balance FROM public.drivers WHERE id = $1 FOR UPDATE`,
+                                [ride.driver_id]
+                            );
+                            if (driverRes.rows.length > 0) {
+                                const driverBal = Number(driverRes.rows[0].wallet_balance || 0);
+                                const newDriverBal = driverBal + netAmount;
+                                await client.query(
+                                    `UPDATE public.drivers SET wallet_balance = $1, updated_at = NOW() WHERE id = $2`,
+                                    [newDriverBal, ride.driver_id]
+                                );
+                                await client.query(
+                                    `INSERT INTO public.driver_wallet_transactions
+                                       (driver_id, type, amount, balance_after, ride_id, description, created_at)
+                                     VALUES ($1, 'CREDIT', $2, $3, $4, $5, NOW())`,
+                                    [
+                                        ride.driver_id,
+                                        netAmount,
+                                        newDriverBal,
+                                        ride.id,
+                                        `Earnings for ride #${ride.id}`
+                                    ]
+                                ).catch((txErr) => console.warn("driver_wallet_transactions insert warning:", txErr.message));
+                                console.log(`✅ Driver ${ride.driver_id} credited ₹${netAmount} for ride #${ride.id}`);
+                            }
+                        }
+                    } else {
+                        console.log(
+                            `⚠️ Wallet insufficient for ride ${ride.id}: need ₹${finalAmount}, have ₹${balance}`
+                        );
+                    }
+
+                    await client.query("COMMIT");
+                } catch (walletErr) {
+                    await client.query("ROLLBACK").catch(() => { });
+                    console.error("Wallet debit/credit error:", walletErr);
+                } finally {
+                    client.release();
+                }
+            }
+
+            // Case B: Cash Payment (Customer pays cash in hand, Platform debits commission from driver wallet)
+            else if (ride.payment_method === "Cash") {
+                const client = await pool.connect();
+                try {
+                    await client.query("BEGIN");
+
+                    const existingTx = await client.query(
+                        `SELECT id FROM public.driver_wallet_transactions 
+                         WHERE ride_id = $1 AND type = 'COMMISSION' LIMIT 1`,
+                        [ride.id]
+                    ).catch(() => ({ rows: [] }));
+
+                    if (existingTx.rows.length === 0 && ride.driver_id && commission > 0) {
+                        const driverRes = await client.query(
+                            `SELECT wallet_balance FROM public.drivers WHERE id = $1 FOR UPDATE`,
+                            [ride.driver_id]
+                        );
+                        if (driverRes.rows.length > 0) {
+                            const driverBal = Number(driverRes.rows[0].wallet_balance || 0);
+                            const newDriverBal = driverBal - commission;
+                            await client.query(
+                                `UPDATE public.drivers SET wallet_balance = $1, updated_at = NOW() WHERE id = $2`,
+                                [newDriverBal, ride.driver_id]
+                            );
+                            await client.query(
+                                `INSERT INTO public.driver_wallet_transactions
+                                   (driver_id, type, amount, balance_after, ride_id, description, created_at)
+                                 VALUES ($1, 'COMMISSION', $2, $3, $4, $5, NOW())`,
+                                [
+                                    ride.driver_id,
+                                    commission,
+                                    newDriverBal,
+                                    ride.id,
+                                    `Platform commission for cash ride #${ride.id}`
+                                ]
+                            ).catch((txErr) => console.warn("driver_wallet_transactions insert warning:", txErr.message));
+                            console.log(`✅ Driver ${ride.driver_id} debited ₹${commission} commission for cash ride #${ride.id}`);
+                        }
+                    }
+
                     await client.query(
-                        `UPDATE public.rides
-                         SET payment_status = 'PAID', updated_at = NOW()
-                         WHERE id = $1`,
+                        `UPDATE public.rides SET payment_status = 'PAID', updated_at = NOW() WHERE id = $1`,
                         [ride.id]
                     );
-
-                    // Log in payments table
-                    await client.query(
-                        `INSERT INTO public.payments
-                           (ride_id, user_id, amount, currency,
-                            payment_gateway, payment_method,
-                            payment_status, paid_at, updated_at)
-                         VALUES ($1, $2, $3, 'INR', NULL, 'WALLET', 'CAPTURED', NOW(), NOW())`,
-                        [ride.id, ride.user_id, fare]
-                    );
-
                     ride.payment_status = "PAID";
-                    console.log(`✅ Wallet debited ₹${fare} for ride ${ride.id}`);
-                } else {
-                    // Insufficient — leave PENDING
-                    console.log(
-                        `⚠️ Wallet insufficient for ride ${ride.id}: need ₹${fare}, have ₹${balance}`
-                    );
-                }
 
-                await client.query("COMMIT");
-            } catch (walletErr) {
-                await client.query("ROLLBACK").catch(() => { });
-                console.error("Wallet debit error:", walletErr);
-                // Don't fail the whole request — ride is completed
-            } finally {
-                client.release();
+                    await client.query("COMMIT");
+                } catch (cashErr) {
+                    await client.query("ROLLBACK").catch(() => { });
+                    console.error("Cash ride commission debit error:", cashErr);
+                } finally {
+                    client.release();
+                }
             }
         }
 
@@ -2116,29 +2294,6 @@ const toggleOnline = async (req, res) => {
     }
 };
 
-// const getDriverStatus = async (req, res) => {
-//     try {
-//         const driver_id = req.user.userId;
-
-//         const result = await pool.query(
-//             `SELECT id, full_name, is_online, is_available, is_blocked,
-//               rating, total_rides, current_latitude, current_longitude
-//        FROM public.drivers
-//        WHERE id = $1`,
-//             [driver_id]
-//         );
-
-//         if (result.rows.length === 0) {
-//             return res.status(404).json({ success: false, message: "Driver not found" });
-//         }
-
-//         return res.status(200).json({ success: true, data: result.rows[0] });
-//     } catch (error) {
-//         console.error("Get Driver Status Error:", error);
-//         return res.status(500).json({ success: false, message: error.message });
-//     }
-// };
-
 // GET /driver/current_ride
 
 const getDriverStatus = async (req, res) => {
@@ -2178,7 +2333,7 @@ const getDriverStatus = async (req, res) => {
 
         return res.status(200).json({ success: true, data: result.rows[0] });
     } catch (error) {
-        console.error("Get Driver Status Error:", error);
+        console.error("Get Driver Status Error", error);
         return res.status(500).json({ success: false, message: error.message });
     }
 };
@@ -2343,7 +2498,7 @@ const markRidePaid = async (req, res) => {
 
         // 1. Verify ride belongs to this driver + is COMPLETED
         const rideRes = await pool.query(
-            `SELECT id, user_id, driver_id, ride_status, payment_status, final_amount, payment_method
+            `SELECT id, user_id, driver_id, ride_status, payment_status, final_amount, payment_method, commission_amount, net_amount
        FROM public.rides
        WHERE id = $1 AND driver_id = $2
        LIMIT 1`,
@@ -2371,6 +2526,53 @@ const markRidePaid = async (req, res) => {
                 success: false,
                 message: "This ride is already marked as paid",
             });
+        }
+
+        // Deduct platform commission from driver wallet for cash rides if not already deducted
+        const resolvedMethod = payment_method || ride.payment_method || "Cash";
+        if (resolvedMethod === "Cash") {
+            const finalAmount = Number(ride.final_amount || 0);
+            let commission = Number(ride.commission_amount || 0);
+            if (commission <= 0) {
+                commission = calculateCommission(finalAmount > 0 ? finalAmount : 50);
+            }
+
+            try {
+                const existingTx = await pool.query(
+                    `SELECT id FROM public.driver_wallet_transactions WHERE ride_id = $1 AND type = 'COMMISSION' LIMIT 1`,
+                    [id]
+                ).catch(() => ({ rows: [] }));
+
+                if (existingTx.rows.length === 0 && commission > 0) {
+                    const driverRes = await pool.query(
+                        `SELECT wallet_balance FROM public.drivers WHERE id = $1 FOR UPDATE`,
+                        [driver_id]
+                    );
+                    if (driverRes.rows.length > 0) {
+                        const curBal = Number(driverRes.rows[0].wallet_balance || 0);
+                        const newBal = curBal - commission;
+                        await pool.query(
+                            `UPDATE public.drivers SET wallet_balance = $1, updated_at = NOW() WHERE id = $2`,
+                            [newBal, driver_id]
+                        );
+                        await pool.query(
+                            `INSERT INTO public.driver_wallet_transactions
+                               (driver_id, type, amount, balance_after, ride_id, description, created_at)
+                             VALUES ($1, 'COMMISSION', $2, $3, $4, $5, NOW())`,
+                            [
+                                driver_id,
+                                commission,
+                                newBal,
+                                id,
+                                `Platform commission for cash ride #${id}`
+                            ]
+                        ).catch((txErr) => console.warn("driver_wallet_transactions insert warning:", txErr.message));
+                        console.log(`✅ Driver ${driver_id} debited ₹${commission} commission upon markRidePaid for ride #${id}`);
+                    }
+                }
+            } catch (err) {
+                console.error("Commission debit error in markRidePaid:", err.message);
+            }
         }
 
         // 2. Mark paid
@@ -2990,26 +3192,26 @@ const rechargeDriverWallet = async (req, res) => {
 };
 
 const updateMuteStatus = async (req, res) => {
-  try {
-    const driverId = req.user.userId;
-    const { is_muted } = req.body;
+    try {
+        const driverId = req.user.userId;
+        const { is_muted } = req.body;
 
-    if (typeof is_muted !== "boolean") {
-      return res.status(400).json({ success: false, message: "is_muted must be a boolean" });
-    }
+        if (typeof is_muted !== "boolean") {
+            return res.status(400).json({ success: false, message: "is_muted must be a boolean" });
+        }
 
-    await pool.query(
-      `UPDATE public.drivers 
+        await pool.query(
+            `UPDATE public.drivers 
        SET is_phone_muted = $1, updated_at = NOW() 
        WHERE id = $2`,
-      [is_muted, driverId]
-    );
+            [is_muted, driverId]
+        );
 
-    return res.status(200).json({ success: true });
-  } catch (error) {
-    console.error("Update Mute Status Error:", error);
-    return res.status(500).json({ success: false, message: error.message });
-  }
+        return res.status(200).json({ success: true });
+    } catch (error) {
+        console.error("Update Mute Status Error:", error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
 };
 
 

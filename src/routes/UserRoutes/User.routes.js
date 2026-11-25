@@ -179,7 +179,17 @@ router.post(
 
     body("payment_method")
       .notEmpty()
-      .withMessage("Payment method is required")
+      .withMessage("Payment method is required"),
+
+    body("commission_amount")
+      .optional()
+      .isNumeric()
+      .withMessage("Commission amount must be a number"),
+
+    body("net_amount")
+      .optional()
+      .isNumeric()
+      .withMessage("Net amount must be a number")
   ],
   createRide
 );
@@ -310,6 +320,12 @@ router.post(
       .isInt({ min: 1 }).withMessage("duration_min must be >= 1"),
     body("is_night").optional().isBoolean(),
     body("vehicle_type").optional({ nullable: true, checkFalsy: true }).trim(),
+    body("pickup_address").optional().isString(),
+    body("drop_address").optional().isString(),
+    body("pickup_latitude").optional().isNumeric(),
+    body("pickup_longitude").optional().isNumeric(),
+    body("drop_latitude").optional().isNumeric(),
+    body("drop_longitude").optional().isNumeric(),
   ],
   // validate,
   estimateFares

@@ -87,20 +87,20 @@ const cancelRide = async (req, res) => {
         );
       }
 
-      try {
-        const { getIO } = require("../../sockets/index.js");
-        const io = getIO();
+      // try {
+      //   const { getIO } = require("../../sockets/index.js");
+      //   const io = getIO();
 
-        // Broadcast cancellation so any driver with this ride in queue clears it
-        io.emit("ride_cancelled", {
-          ride_id: response.data.ride_id,
-          rideId: response.data.ride_id,
-          cancelled_by: response.data.cancelled_by,
-          reason: response.data.reason,
-        });
-      } catch (e) {
-        console.log("ride_cancelled broadcast error:", e.message);
-      }
+      //   // Broadcast cancellation so any driver with this ride in queue clears it
+      //   io.emit("ride_cancelled", {
+      //     ride_id: response.data.ride_id,
+      //     rideId: response.data.ride_id,
+      //     cancelled_by: response.data.cancelled_by,
+      //     reason: response.data.reason,
+      //   });
+      // } catch (e) {
+      //   console.log("ride_cancelled broadcast error:", e.message);
+      // }
     } catch (emitErr) {
       console.log("emitRideCancelled error:", emitErr.message);
       // Don't fail the request if socket emit fails
